@@ -1,0 +1,11 @@
+[environment]
+python = ".venv"
+
+[rules]
+invalid-method-override = "ignore"
+
+[[overrides]]
+include = ["src/illogical/modules/sf_symbols.py", "src/illogical/ui/sidebar.py"]
+[overrides.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"

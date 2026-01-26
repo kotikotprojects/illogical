@@ -1,0 +1,66 @@
+[tool.briefcase]
+project_name = "illogical"
+bundle = "com.kotikot.illogical"
+version = "0.0.1"
+url = "https://dsp.kotikot.com/illogical"
+license.file = "LICENSE"
+author = "h"
+author_email = "h@kotikot.com"
+
+[tool.briefcase.app.illogical]
+formal_name = "illogical"
+description = "The sane Logic Pro plugin manager Apple forgot to build"
+long_description = """An advanced, open-source plugin manager for Logic Pro to organize your Audio Units ecosystem."""
+sources = [
+    "src/illogical",
+]
+
+requires = [
+    "PySide6-Essentials~=6.8",
+    "logic-plugin-manager[search]>=1.0.0",
+    "pyqt-liquidglass>=0.1.0",
+]
+
+[tool.briefcase.app.illogical.macOS]
+universal_build = true
+min_os_version = "12.0"
+requires = [
+    "std-nslog~=1.0.3",
+]
+
+[project]
+name = "illogical"
+version = "0.0.0"
+requires-python = ">=3.13"
+dependencies = [
+    "briefcase>=0.3.25",
+    "logic-plugin-manager[search]>=1.0.0",
+    "pyqt-liquidglass>=0.1.0",
+    "PySide6-Essentials~=6.8",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.13,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["CPY", "D1", "D203", "D212", "COM812", "RUF001", "RUF002", "RUF003"]
+unfixable = ["F401"]
+
+[tool.ruff.lint.per-file-ignores]
+"*.lock" = ["ALL"]
+"docs/*" = ["ALL"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+docstring-code-format = true
+skip-magic-trailing-comma = true
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false
