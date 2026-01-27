@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import plistlib
 import shutil
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -14,10 +15,16 @@ from illogical.modules.backup_models import (
     BackupManifest,
     BackupSettings,
     BackupTrigger,
+    ChangeType,
+    DetailedBackupChanges,
+    FieldChange,
+    PluginChange,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from logic_plugin_manager import Logic
 
 MANIFEST_VERSION = 1
 MANIFEST_FILENAME = "manifest.json"
@@ -284,3 +291,117 @@ def should_create_auto_backup(min_interval_seconds: int = 300) -> bool:
         return True
     elapsed = (datetime.now(UTC) - last_auto).total_seconds()
     return elapsed >= min_interval_seconds
+
+
+def _parse_tagset_plist(path: Path) -> dict | None:
+    try:
+        with path.open("rb") as f:
+            return plistlib.load(f)
+    except (plistlib.InvalidFileException, OSError):
+        return None
+
+
+def _compute_field_changes(
+    old_data: dict | None, new_data: dict | None
+) -> list[FieldChange]:
+    changes: list[FieldChange] = []
+
+    old_data = old_data or {}
+    new_data = new_data or {}
+
+    backup_nickname = old_data.get("nickname", "")
+    current_nickname = new_data.get("nickname", "")
+    if backup_nickname != current_nickname:
+        changes.append(
+            FieldChange("nickname", current_nickname or None, backup_nickname or None)
+        )
+
+    backup_shortname = old_data.get("shortname", "")
+    current_shortname = new_data.get("shortname", "")
+    if backup_shortname != current_shortname:
+        changes.append(
+            FieldChange(
+                "shortname", current_shortname or None, backup_shortname or None
+            )
+        )
+
+    backup_tags = set(old_data.get("tags", {}).keys())
+    current_tags = set(new_data.get("tags", {}).keys())
+
+    changes.extend(
+        FieldChange(f"category:{tag}", None, "removed")
+        for tag in current_tags - backup_tags
+    )
+    changes.extend(
+        FieldChange(f"category:{tag}", None, "added")
+        for tag in backup_tags - current_tags
+    )
+
+    return changes
+
+
+def _resolve_plugin_name(tags_id: str, logic: Logic | None) -> str:
+    if logic is None:
+        return tags_id
+    plugin = logic.plugins.get_by_tags_id(tags_id)
+    if plugin:
+        return plugin.name
+    return tags_id
+
+
+def _tags_id_from_filename(filename: str) -> str:
+    return filename.removesuffix(".tagset")
+
+
+def compute_detailed_changes(
+    backup_name: str, logic: Logic | None = None
+) -> DetailedBackupChanges:
+    backup_path = BACKUPS_PATH / backup_name
+    if not backup_path.exists():
+        return DetailedBackupChanges()
+
+    backup_manifest = _load_manifest(backup_path)
+    if not backup_manifest:
+        return DetailedBackupChanges()
+
+    current_files = _get_backup_files()
+    current_checksums = {f.name: _compute_file_checksum(f) for f in current_files}
+    backup_checksums = backup_manifest.checksums
+
+    added_files = [f for f in current_checksums if f not in backup_checksums]
+    deleted_files = [f for f in backup_checksums if f not in current_checksums]
+    modified_files = [
+        f
+        for f in current_checksums
+        if f in backup_checksums and current_checksums[f] != backup_checksums[f]
+    ]
+
+    plugin_changes: list[PluginChange] = []
+
+    for filename in added_files:
+        tags_id = _tags_id_from_filename(filename)
+        plugin_name = _resolve_plugin_name(tags_id, logic)
+        plugin_changes.append(PluginChange(tags_id, plugin_name, ChangeType.ADDED))
+
+    for filename in deleted_files:
+        tags_id = _tags_id_from_filename(filename)
+        plugin_name = _resolve_plugin_name(tags_id, logic)
+        plugin_changes.append(PluginChange(tags_id, plugin_name, ChangeType.DELETED))
+
+    for filename in modified_files:
+        tags_id = _tags_id_from_filename(filename)
+        plugin_name = _resolve_plugin_name(tags_id, logic)
+
+        current_path = TAGS_PATH / filename
+        backup_file_path = backup_path / filename
+
+        current_data = _parse_tagset_plist(current_path)
+        backup_data = _parse_tagset_plist(backup_file_path)
+
+        field_changes = _compute_field_changes(backup_data, current_data)
+
+        plugin_changes.append(
+            PluginChange(tags_id, plugin_name, ChangeType.MODIFIED, field_changes)
+        )
+
+    return DetailedBackupChanges(plugins=plugin_changes)

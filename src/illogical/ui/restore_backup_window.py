@@ -16,7 +16,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from illogical.modules.backup_models import BackupChanges, BackupInfo, BackupTrigger
+from illogical.modules.backup_models import (
+    BackupInfo,
+    BackupTrigger,
+    ChangeType,
+    DetailedBackupChanges,
+    FieldChange,
+    PluginChange,
+)
 from illogical.modules.sf_symbols import sf_symbol
 
 
@@ -27,7 +34,7 @@ class RestoreBackupWindow(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._backups: list[BackupInfo] = []
-        self._changes_cache: dict[str, BackupChanges] = {}
+        self._changes_cache: dict[str, DetailedBackupChanges] = {}
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -143,14 +150,16 @@ class RestoreBackupWindow(QDialog):
 
         self.backup_selected.emit(backup_name)
 
-    def set_changes(self, backup_name: str, changes: BackupChanges) -> None:
+    def set_detailed_changes(
+        self, backup_name: str, changes: DetailedBackupChanges
+    ) -> None:
         self._changes_cache[backup_name] = changes
 
         current = self._backup_list.currentItem()
         if current and current.data(Qt.ItemDataRole.UserRole) == backup_name:
             self._display_changes(changes)
 
-    def _display_changes(self, changes: BackupChanges) -> None:
+    def _display_changes(self, changes: DetailedBackupChanges) -> None:
         self._changes_tree.clear()
 
         if changes.is_empty:
@@ -158,23 +167,44 @@ class RestoreBackupWindow(QDialog):
             self._changes_tree.addTopLevelItem(item)
             return
 
-        self._add_change_group(changes.added, "Files to remove", "minus.circle")
-        self._add_change_group(
-            changes.modified, "Files to revert", "arrow.uturn.backward.circle"
+        self._add_plugin_group(changes.added, "Plugins to remove", "minus.circle")
+        self._add_plugin_group(
+            changes.modified, "Plugins to revert", "arrow.uturn.backward.circle"
         )
-        self._add_change_group(changes.deleted, "Files to restore", "plus.circle")
+        self._add_plugin_group(changes.deleted, "Plugins to restore", "plus.circle")
 
-    def _add_change_group(self, files: list[str], label: str, icon_name: str) -> None:
-        if not files:
+    def _add_plugin_group(
+        self, plugins: list[PluginChange], label: str, icon_name: str
+    ) -> None:
+        if not plugins:
             return
-        group_item = QTreeWidgetItem([f"{label} ({len(files)})"])
+
+        group_item = QTreeWidgetItem([f"{label} ({len(plugins)})"])
         icon = sf_symbol(icon_name, 14)
         if not icon.isNull():
             group_item.setIcon(0, icon)
-        for filename in sorted(files):
-            QTreeWidgetItem(group_item, [filename])
+
+        for plugin in sorted(plugins, key=lambda p: p.plugin_name.lower()):
+            plugin_item = QTreeWidgetItem(group_item, [plugin.plugin_name])
+
+            if plugin.change_type == ChangeType.MODIFIED and plugin.field_changes:
+                for field_change in plugin.field_changes:
+                    change_text = self._format_field_change(field_change)
+                    QTreeWidgetItem(plugin_item, [change_text])
+
         self._changes_tree.addTopLevelItem(group_item)
         group_item.setExpanded(True)
+
+    def _format_field_change(self, change: FieldChange) -> str:
+        if change.field_name.startswith("category:"):
+            category = change.field_name.split(":", 1)[1]
+            if change.new_value == "added":
+                return f"+ {category}"
+            return f"− {category}"
+
+        current = change.old_value or "(empty)"
+        restored = change.new_value or "(empty)"
+        return f"{change.field_name}: '{current}' → '{restored}'"
 
     def _on_restore_clicked(self) -> None:
         current = self._backup_list.currentItem()

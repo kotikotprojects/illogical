@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, Signal
 
 from illogical.modules import backup_manager
 from illogical.modules.backup_models import BackupSettings, BackupTrigger
+
+if TYPE_CHECKING:
+    from logic_plugin_manager import Logic
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +19,17 @@ class BackupWorker(QObject):
     backup_list_ready = Signal(list)
     restore_completed = Signal(bool, str)
     changes_computed = Signal(str, object)
+    detailed_changes_computed = Signal(str, object)
     storage_usage_ready = Signal(int, int)
     purge_completed = Signal(int)
     error_occurred = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._logic: Logic | None = None
+
+    def set_logic(self, logic: Logic) -> None:
+        self._logic = logic
 
     def create_backup(
         self, trigger: BackupTrigger = BackupTrigger.MANUAL, description: str = ""
@@ -53,6 +65,14 @@ class BackupWorker(QObject):
             logger.exception("Computing changes failed")
             self.error_occurred.emit(str(e))
 
+    def compute_detailed_changes(self, backup_name: str) -> None:
+        try:
+            changes = backup_manager.compute_detailed_changes(backup_name, self._logic)
+            self.detailed_changes_computed.emit(backup_name, changes)
+        except OSError as e:
+            logger.exception("Computing detailed changes failed")
+            self.error_occurred.emit(str(e))
+
     def get_storage_usage(self) -> None:
         try:
             total_bytes, count = backup_manager.get_storage_usage()
@@ -86,6 +106,7 @@ class BackupService(QObject):
     backup_list_ready = Signal(list)
     restore_completed = Signal(bool, str)
     changes_computed = Signal(str, object)
+    detailed_changes_computed = Signal(str, object)
     storage_usage_ready = Signal(int, int)
     purge_completed = Signal(int)
     error_occurred = Signal(str)
@@ -100,6 +121,7 @@ class BackupService(QObject):
         self._worker.backup_list_ready.connect(self.backup_list_ready)
         self._worker.restore_completed.connect(self.restore_completed)
         self._worker.changes_computed.connect(self.changes_computed)
+        self._worker.detailed_changes_computed.connect(self.detailed_changes_computed)
         self._worker.storage_usage_ready.connect(self.storage_usage_ready)
         self._worker.purge_completed.connect(self.purge_completed)
         self._worker.error_occurred.connect(self.error_occurred)
@@ -119,6 +141,12 @@ class BackupService(QObject):
 
     def compute_changes(self, backup_name: str) -> None:
         self._worker.compute_changes(backup_name)
+
+    def compute_detailed_changes(self, backup_name: str) -> None:
+        self._worker.compute_detailed_changes(backup_name)
+
+    def set_logic(self, logic: Logic) -> None:
+        self._worker.set_logic(logic)
 
     def get_storage_usage(self) -> None:
         self._worker.get_storage_usage()

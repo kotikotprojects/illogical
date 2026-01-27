@@ -14,6 +14,48 @@ class BackupTrigger(Enum):
     AUTO = "auto"
 
 
+class ChangeType(Enum):
+    ADDED = "added"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+
+
+@dataclass
+class FieldChange:
+    field_name: str
+    old_value: str | None
+    new_value: str | None
+
+
+@dataclass
+class PluginChange:
+    tags_id: str
+    plugin_name: str
+    change_type: ChangeType
+    field_changes: list[FieldChange] = field(default_factory=list)
+
+
+@dataclass
+class DetailedBackupChanges:
+    plugins: list[PluginChange] = field(default_factory=list)
+
+    @property
+    def added(self) -> list[PluginChange]:
+        return [p for p in self.plugins if p.change_type == ChangeType.ADDED]
+
+    @property
+    def modified(self) -> list[PluginChange]:
+        return [p for p in self.plugins if p.change_type == ChangeType.MODIFIED]
+
+    @property
+    def deleted(self) -> list[PluginChange]:
+        return [p for p in self.plugins if p.change_type == ChangeType.DELETED]
+
+    @property
+    def is_empty(self) -> bool:
+        return len(self.plugins) == 0
+
+
 @dataclass
 class BackupChanges:
     added: list[str] = field(default_factory=list)

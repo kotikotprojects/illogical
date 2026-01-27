@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from PySide6.QtGui import QCloseEvent, QKeyEvent, QShowEvent
 
     from illogical.modules.backup_models import (
-        BackupChanges,
         BackupInfo,
         BackupSettings,
+        DetailedBackupChanges,
     )
 
 
@@ -101,7 +101,9 @@ class MainWindow(QMainWindow):
         self._backup_service.backup_created.connect(self._on_backup_created)
         self._backup_service.backup_list_ready.connect(self._on_backup_list_ready)
         self._backup_service.restore_completed.connect(self._on_restore_completed)
-        self._backup_service.changes_computed.connect(self._on_changes_computed)
+        self._backup_service.detailed_changes_computed.connect(
+            self._on_detailed_changes_computed
+        )
         self._backup_service.storage_usage_ready.connect(self._on_storage_usage_ready)
         self._backup_service.purge_completed.connect(self._on_purge_completed)
         self._backup_service.error_occurred.connect(self._on_backup_error)
@@ -130,6 +132,7 @@ class MainWindow(QMainWindow):
 
     def _on_plugins_loaded(self, logic: Logic) -> None:
         self._logic = logic
+        self._backup_service.set_logic(logic)
         self._sidebar.populate(logic)
         self._plugin_table.set_plugins(logic)
         self._loading_overlay.hide()
@@ -213,11 +216,13 @@ class MainWindow(QMainWindow):
             self._restore_window.set_backups(backups)
 
     def _on_restore_backup_selected(self, backup_name: str) -> None:
-        self._backup_service.compute_changes(backup_name)
+        self._backup_service.compute_detailed_changes(backup_name)
 
-    def _on_changes_computed(self, backup_name: str, changes: BackupChanges) -> None:
+    def _on_detailed_changes_computed(
+        self, backup_name: str, changes: DetailedBackupChanges
+    ) -> None:
         if self._restore_window:
-            self._restore_window.set_changes(backup_name, changes)
+            self._restore_window.set_detailed_changes(backup_name, changes)
 
     def _on_restore_requested(self, backup_name: str) -> None:
         self._backup_service.restore_backup(backup_name)
