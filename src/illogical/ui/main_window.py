@@ -6,7 +6,10 @@ import pyqt_liquidglass as glass
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QSplitter, QWidget
 
+from illogical.modules import backup_manager
+from illogical.modules.backup_models import BackupTrigger
 from illogical.modules.backup_service import BackupService
+from illogical.modules.models import COL_CUSTOM_NAME, COL_SHORT_NAME
 from illogical.modules.plugin_service import PluginService
 from illogical.modules.settings import Settings
 from illogical.ui.backup_settings_window import BackupSettingsWindow
@@ -17,7 +20,7 @@ from illogical.ui.restore_backup_window import RestoreBackupWindow
 from illogical.ui.sidebar import Sidebar
 
 if TYPE_CHECKING:
-    from logic_plugin_manager import Logic, SearchResult
+    from logic_plugin_manager import AudioComponent, Logic, SearchResult
     from PySide6.QtGui import QCloseEvent, QKeyEvent, QShowEvent
 
     from illogical.modules.backup_models import (
@@ -84,6 +87,7 @@ class MainWindow(QMainWindow):
         self._sidebar.enter_pressed.connect(self._plugin_table.focus_table)
         self._plugin_table.search_changed.connect(self._on_search_changed)
         self._plugin_table.plugin_selected.connect(self._on_plugin_selected)
+        self._plugin_table.edit_requested.connect(self._on_plugin_edit_requested)
 
     def _setup_service(self) -> None:
         self._service = PluginService(self)
@@ -151,6 +155,24 @@ class MainWindow(QMainWindow):
         if any(c.name == "" for c in categories):
             paths.append("Top Level")
         self._sidebar.highlight_categories(paths)
+
+    def _on_plugin_edit_requested(
+        self, plugin: AudioComponent, column: int, new_value: str
+    ) -> None:
+        try:
+            if backup_manager.should_create_auto_backup():
+                field = "nickname" if column == COL_CUSTOM_NAME else "shortname"
+                description = f"Before setting {field} of {plugin.name}"
+                backup_manager.create_backup(BackupTrigger.AUTO, description)
+
+            if column == COL_CUSTOM_NAME:
+                plugin.set_nickname(new_value)
+            elif column == COL_SHORT_NAME:
+                plugin.set_shortname(new_value)
+
+            self._plugin_table.update_plugin_display(plugin, column)
+        except OSError as e:
+            QMessageBox.warning(self, "Edit Failed", f"Failed to save changes: {e}")
 
     def _on_search_results(self, results: list[SearchResult]) -> None:
         plugins = [r.plugin for r in results]

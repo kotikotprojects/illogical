@@ -64,6 +64,7 @@ class _VimTableView(QTableView):
 class PluginTableView(QWidget):
     search_changed = Signal(str)
     plugin_selected = Signal(object)
+    edit_requested = Signal(object, int, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -78,6 +79,7 @@ class PluginTableView(QWidget):
         layout.addWidget(self._search_bar)
 
         self._model = PluginTableModel()
+        self._model.edit_requested.connect(self.edit_requested)
         self._table = _VimTableView()
         self._table.setModel(self._model)
         self._table.setAlternatingRowColors(True)
@@ -148,6 +150,9 @@ class PluginTableView(QWidget):
 
     def filter_by_search_results(self, plugins: list[AudioComponent]) -> None:
         self._model.filter_by_search_results(plugins)
+
+    def update_plugin_display(self, plugin: AudioComponent, column: int) -> None:
+        self._model.update_plugin_display(plugin, column)
 
     def clear_search(self) -> None:
         self._search_bar.clear()

@@ -10,6 +10,7 @@ from PySide6.QtCore import (
     QObject,
     QSortFilterProxyModel,
     Qt,
+    Signal,
 )
 
 from illogical.modules.sf_symbols import sf_symbol
@@ -48,6 +49,8 @@ class PluginTableModel(QAbstractTableModel):
         "Manufacturer",
         "Version",
     ]
+
+    edit_requested = Signal(object, int, str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -96,7 +99,7 @@ class PluginTableModel(QAbstractTableModel):
         plugin = self._plugins[index.row()]
         col = index.column()
 
-        if role == Qt.ItemDataRole.DisplayRole:
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             if col == COL_NAME:
                 return plugin.name
             if col == COL_CUSTOM_NAME:
@@ -112,6 +115,44 @@ class PluginTableModel(QAbstractTableModel):
                 return _format_version(version)
 
         return None
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        base_flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        if index.column() in (COL_CUSTOM_NAME, COL_SHORT_NAME):
+            return base_flags | Qt.ItemFlag.ItemIsEditable
+        return base_flags
+
+    def setData(  # noqa: N802
+        self, index: QModelIndex, value: object, role: int = Qt.ItemDataRole.EditRole
+    ) -> bool:
+        if role != Qt.ItemDataRole.EditRole:
+            return False
+        if not index.isValid() or not (0 <= index.row() < len(self._plugins)):
+            return False
+        col = index.column()
+        if col not in (COL_CUSTOM_NAME, COL_SHORT_NAME):
+            return False
+
+        plugin = self._plugins[index.row()]
+        new_value = str(value) if value else ""
+
+        if col == COL_CUSTOM_NAME:
+            current_value = plugin.tagset.nickname
+        else:
+            current_value = plugin.tagset.shortname
+        if new_value == (current_value or ""):
+            return False
+
+        self.edit_requested.emit(plugin, col, new_value)
+        return False
+
+    def update_plugin_display(self, plugin: AudioComponent, column: int) -> None:
+        try:
+            row = self._plugins.index(plugin)
+        except ValueError:
+            return
+        index = self.index(row, column)
+        self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
 
     def filter_by_category(self, category: str | None) -> None:
         self.beginResetModel()
