@@ -4,16 +4,27 @@ from typing import TYPE_CHECKING
 
 import pyqt_liquidglass as glass
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QSplitter, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QSplitter, QWidget
 
+from illogical.modules.backup_service import BackupService
 from illogical.modules.plugin_service import PluginService
+from illogical.modules.settings import Settings
+from illogical.ui.backup_settings_window import BackupSettingsWindow
 from illogical.ui.loading_overlay import LoadingOverlay
+from illogical.ui.menu_bar import MenuBar
 from illogical.ui.plugin_table import PluginTableView
+from illogical.ui.restore_backup_window import RestoreBackupWindow
 from illogical.ui.sidebar import Sidebar
 
 if TYPE_CHECKING:
     from logic_plugin_manager import Logic, SearchResult
     from PySide6.QtGui import QCloseEvent, QKeyEvent, QShowEvent
+
+    from illogical.modules.backup_models import (
+        BackupChanges,
+        BackupInfo,
+        BackupSettings,
+    )
 
 
 class MainWindow(QMainWindow):
@@ -25,11 +36,21 @@ class MainWindow(QMainWindow):
 
         self._logic: Logic | None = None
         self._glass_applied = False
+        self._settings = Settings()
 
         self._setup_ui()
         self._setup_service()
+        self._setup_backup_service()
+        self._setup_menu_bar()
 
         glass.prepare_window_for_glass(self)
+
+    def _setup_menu_bar(self) -> None:
+        self._menu_bar = MenuBar(self)
+
+        self._menu_bar.backup_now_triggered.connect(self._on_backup_now)
+        self._menu_bar.restore_backup_triggered.connect(self._on_restore_backup)
+        self._menu_bar.backup_settings_triggered.connect(self._on_backup_settings)
 
     def _setup_ui(self) -> None:
         self._central = QWidget()
@@ -70,6 +91,19 @@ class MainWindow(QMainWindow):
         self._service.plugins_loaded.connect(self._on_plugins_loaded)
         self._service.search_results.connect(self._on_search_results)
         self._service.error_occurred.connect(self._on_error)
+
+    def _setup_backup_service(self) -> None:
+        self._backup_service = BackupService(self)
+        self._backup_service.backup_created.connect(self._on_backup_created)
+        self._backup_service.backup_list_ready.connect(self._on_backup_list_ready)
+        self._backup_service.restore_completed.connect(self._on_restore_completed)
+        self._backup_service.changes_computed.connect(self._on_changes_computed)
+        self._backup_service.storage_usage_ready.connect(self._on_storage_usage_ready)
+        self._backup_service.purge_completed.connect(self._on_purge_completed)
+        self._backup_service.error_occurred.connect(self._on_backup_error)
+
+        self._restore_window: RestoreBackupWindow | None = None
+        self._settings_window: BackupSettingsWindow | None = None
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
@@ -125,6 +159,83 @@ class MainWindow(QMainWindow):
     def _on_error(self, message: str) -> None:
         self._loading_overlay.set_message(f"Error: {message}")
 
+    def _on_backup_now(self) -> None:
+        self._backup_service.create_backup()
+
+    def _on_restore_backup(self) -> None:
+        self._restore_window = RestoreBackupWindow(self)
+        self._restore_window.backup_selected.connect(self._on_restore_backup_selected)
+        self._restore_window.restore_requested.connect(self._on_restore_requested)
+        self._backup_service.list_backups()
+        self._restore_window.show()
+
+    def _on_backup_settings(self) -> None:
+        settings = self._settings.get_backup_settings()
+        self._settings_window = BackupSettingsWindow(settings, self)
+        self._settings_window.settings_saved.connect(self._on_settings_saved)
+        self._settings_window.purge_requested.connect(self._on_purge_requested)
+        self._backup_service.get_storage_usage()
+        self._settings_window.show()
+
+    def _on_backup_created(self, backup_info: BackupInfo) -> None:
+        QMessageBox.information(
+            self,
+            "Backup Created",
+            f"Backup created successfully.\n\n"
+            f"Files: {backup_info.file_count}\n"
+            f"Size: {backup_info.size_display}",
+        )
+
+    def _on_backup_list_ready(self, backups: list[BackupInfo]) -> None:
+        if self._restore_window:
+            self._restore_window.set_backups(backups)
+
+    def _on_restore_backup_selected(self, backup_name: str) -> None:
+        self._backup_service.compute_changes(backup_name)
+
+    def _on_changes_computed(self, backup_name: str, changes: BackupChanges) -> None:
+        if self._restore_window:
+            self._restore_window.set_changes(backup_name, changes)
+
+    def _on_restore_requested(self, backup_name: str) -> None:
+        self._backup_service.restore_backup(backup_name)
+
+    def _on_restore_completed(self, success: bool, backup_name: str) -> None:  # noqa: FBT001
+        if success:
+            QMessageBox.information(
+                self,
+                "Restore Complete",
+                f"Backup '{backup_name}' has been restored.\n\n"
+                "Please restart the application to see the changes.",
+            )
+        else:
+            QMessageBox.warning(
+                self, "Restore Failed", f"Failed to restore backup '{backup_name}'."
+            )
+
+    def _on_storage_usage_ready(self, total_bytes: int, count: int) -> None:
+        if self._settings_window:
+            self._settings_window.update_storage_info(total_bytes, count)
+
+    def _on_settings_saved(self, settings: BackupSettings) -> None:
+        self._settings.save_backup_settings(settings)
+        if settings.auto_purge:
+            self._backup_service.purge_old_backups(settings)
+
+    def _on_purge_requested(self) -> None:
+        settings = self._settings.get_backup_settings()
+        self._backup_service.purge_old_backups(settings)
+
+    def _on_purge_completed(self, deleted_count: int) -> None:
+        self._backup_service.get_storage_usage()
+        if deleted_count > 0:
+            QMessageBox.information(
+                self, "Purge Complete", f"Deleted {deleted_count} old backup(s)."
+            )
+
+    def _on_backup_error(self, message: str) -> None:
+        QMessageBox.warning(self, "Backup Error", message)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         mods = event.modifiers()
         key = event.key()
@@ -175,4 +286,5 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._service.shutdown()
+        self._backup_service.shutdown()
         super().closeEvent(event)
