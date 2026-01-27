@@ -100,9 +100,9 @@ class PluginTableModel(QAbstractTableModel):
             if col == COL_NAME:
                 return plugin.name
             if col == COL_CUSTOM_NAME:
-                return getattr(plugin, "custom_name", "") or ""
+                return plugin.tagset.nickname
             if col == COL_SHORT_NAME:
-                return getattr(plugin, "short_name", "") or ""
+                return plugin.tagset.shortname
             if col == COL_TYPE:
                 return plugin.type_name.display_name
             if col == COL_MANUFACTURER:
@@ -170,8 +170,8 @@ class PluginTableModel(QAbstractTableModel):
                 return getattr(plugin, "version", 0) or 0
             values = {
                 COL_NAME: plugin.name,
-                COL_CUSTOM_NAME: getattr(plugin, "custom_name", "") or "",
-                COL_SHORT_NAME: getattr(plugin, "short_name", "") or "",
+                COL_CUSTOM_NAME: plugin.tagset.nickname or "",
+                COL_SHORT_NAME: plugin.tagset.shortname or "",
                 COL_TYPE: plugin.type_code,
                 COL_MANUFACTURER: plugin.manufacturer,
             }
