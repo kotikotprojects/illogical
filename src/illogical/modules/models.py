@@ -183,9 +183,32 @@ class PluginTableModel(QAbstractTableModel):
         self._apply_sort()
         self.endResetModel()
 
-    def filter_by_search_results(self, plugins: list[AudioComponent]) -> None:
+    def filter_by_search_results(
+        self,
+        plugins: list[AudioComponent],
+        category: str | None = None,
+        manufacturer: str | None = None,
+    ) -> None:
         self.beginResetModel()
-        self._plugins = plugins
+        if manufacturer is not None:
+            self._plugins = [
+                p for p in plugins if p.manufacturer.lower() == manufacturer.lower()
+            ]
+        elif category == "Show All" or category is ...:
+            self._plugins = plugins
+        elif category is None:
+            self._plugins = [p for p in plugins if not p.categories]
+        elif category == "Top Level":
+            self._plugins = [
+                p for p in plugins if any(c.name == "" for c in p.categories)
+            ]
+        elif category is not None:
+            self._plugins = [
+                p for p in plugins if any(c.name == category for c in p.categories)
+            ]
+        else:
+            self._plugins = plugins
+        self._apply_sort()
         self.endResetModel()
 
     def get_plugin(self, row: int) -> AudioComponent | None:

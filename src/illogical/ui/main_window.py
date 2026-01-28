@@ -40,6 +40,8 @@ class MainWindow(QMainWindow):
         self._logic: Logic | None = None
         self._glass_applied = False
         self._settings = Settings()
+        self._current_category: str | None = "Show All"
+        self._current_manufacturer: str | None = None
 
         self._setup_ui()
         self._setup_service()
@@ -139,16 +141,31 @@ class MainWindow(QMainWindow):
         self._plugin_table.focus_table()
 
     def _on_category_selected(self, category: str | None) -> None:
-        self._plugin_table.clear_search()
-        self._plugin_table.filter_by_category(category)
+        self._current_category = category
+        self._current_manufacturer = None
+        query = self._plugin_table.get_search_text()
+        if query:
+            self._service.search(query)
+        else:
+            self._plugin_table.filter_by_category(category)
 
     def _on_manufacturer_selected(self, manufacturer: str) -> None:
-        self._plugin_table.clear_search()
-        self._plugin_table.filter_by_manufacturer(manufacturer)
+        self._current_manufacturer = manufacturer
+        self._current_category = None
+        query = self._plugin_table.get_search_text()
+        if query:
+            self._service.search(query)
+        else:
+            self._plugin_table.filter_by_manufacturer(manufacturer)
 
     def _on_search_changed(self, query: str) -> None:
         if not query:
-            self._plugin_table.filter_by_category("Show All")
+            if self._current_manufacturer:
+                self._plugin_table.filter_by_manufacturer(self._current_manufacturer)
+            else:
+                self._plugin_table.filter_by_category(
+                    self._current_category if self._current_category else "Show All"
+                )
             return
         self._service.search(query)
 
@@ -179,7 +196,11 @@ class MainWindow(QMainWindow):
 
     def _on_search_results(self, results: list[SearchResult]) -> None:
         plugins = [r.plugin for r in results]
-        self._plugin_table.filter_by_search_results(plugins)
+        self._plugin_table.filter_by_search_results(
+            plugins,
+            category=self._current_category,
+            manufacturer=self._current_manufacturer,
+        )
 
     def _on_error(self, message: str) -> None:
         self._loading_overlay.set_message(f"Error: {message}")

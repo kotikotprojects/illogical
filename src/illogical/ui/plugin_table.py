@@ -148,14 +148,22 @@ class PluginTableView(QWidget):
     def filter_by_manufacturer(self, manufacturer: str) -> None:
         self._model.filter_by_manufacturer(manufacturer)
 
-    def filter_by_search_results(self, plugins: list[AudioComponent]) -> None:
-        self._model.filter_by_search_results(plugins)
+    def filter_by_search_results(
+        self,
+        plugins: list[AudioComponent],
+        category: str | None = None,
+        manufacturer: str | None = None,
+    ) -> None:
+        self._model.filter_by_search_results(plugins, category, manufacturer)
 
     def update_plugin_display(self, plugin: AudioComponent, column: int) -> None:
         self._model.update_plugin_display(plugin, column)
 
     def clear_search(self) -> None:
         self._search_bar.clear()
+
+    def get_search_text(self) -> str:
+        return self._search_bar.text()
 
     def focus_search(self) -> None:
         self._search_bar.setFocus()
