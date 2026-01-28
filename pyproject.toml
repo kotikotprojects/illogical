@@ -17,7 +17,7 @@ sources = [
 
 requires = [
     "PySide6-Essentials~=6.8",
-    "logic-plugin-manager[search]>=1.0.0",
+    "logic-plugin-manager[search]>=1.0.1",
     "pyqt-liquidglass>=0.1.0",
 ]
 
@@ -34,7 +34,7 @@ version = "0.0.0"
 requires-python = ">=3.13"
 dependencies = [
     "briefcase>=0.3.25",
-    "logic-plugin-manager[search]>=1.0.0",
+    "logic-plugin-manager[search]>=1.0.1",
     "pyqt-liquidglass>=0.1.0",
     "PySide6-Essentials~=6.8",
 ]

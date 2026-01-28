@@ -287,7 +287,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "briefcase", specifier = ">=0.3.25" },
-    { name = "logic-plugin-manager", extras = ["search"], specifier = ">=1.0.0" },
+    { name = "logic-plugin-manager", extras = ["search"], specifier = ">=1.0.1" },
     { name = "pyqt-liquidglass", specifier = ">=0.1.0" },
     { name = "pyside6-essentials", specifier = "~=6.8" },
 ]
@@ -306,11 +306,11 @@ wheels = [
 
 [[package]]
 name = "logic-plugin-manager"
-version = "1.0.0"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/36/47/0cdfe1b1e35fb30d9b0b7d1c7b8c133254364da8613131d750af1c83b885/logic_plugin_manager-1.0.0.tar.gz", hash = "sha256:b8364838897c4c3319d3ef69ddbdbaa3fc2d795815d2385dea8f2ca7f25f481f", size = 16174, upload-time = "2025-11-07T16:16:34.245Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/08/53bb70675e896c217f6bb1d608ed66908ff6a24a910bae0d35e3be13a539/logic_plugin_manager-1.0.1.tar.gz", hash = "sha256:4ffb5c40d5c21b90d89cc6e23bfdbae5578d5a9ed2fd5b21984a3c621d4e9b67", size = 16234, upload-time = "2026-01-28T20:48:53.687Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/3e/df9410cfa94cf75f1196fce9797a64482823b009bdab417fb11de8ef9c70/logic_plugin_manager-1.0.0-py3-none-any.whl", hash = "sha256:b23e0e1469687d97a33de44b7feaea1e470808dff0968e5289b66e07b7dd6607", size = 23149, upload-time = "2025-11-07T16:16:33.411Z" },
+    { url = "https://files.pythonhosted.org/packages/41/85/01a9431a2036739af6275be0f7d295040354f5771201b2f39b33db067be7/logic_plugin_manager-1.0.1-py3-none-any.whl", hash = "sha256:50d2321caf851a7a189ea179cf0da7b5dea50bb47c7136ef87aac530f369f673", size = 23226, upload-time = "2026-01-28T20:48:52.355Z" },
 ]
 
 [package.optional-dependencies]
