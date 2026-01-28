@@ -169,13 +169,24 @@ class MainWindow(QMainWindow):
                 backup_manager.create_backup(BackupTrigger.AUTO, description)
 
             if column == COL_CUSTOM_NAME:
-                plugin.set_nickname(new_value)
+                self._set_plugin_field(plugin, "nickname", new_value)
             elif column == COL_SHORT_NAME:
-                plugin.set_shortname(new_value)
+                self._set_plugin_field(plugin, "shortname", new_value)
 
             self._plugin_table.update_plugin_display(plugin, column)
         except OSError as e:
             QMessageBox.warning(self, "Edit Failed", f"Failed to save changes: {e}")
+
+    def _set_plugin_field(self, plugin: AudioComponent, field: str, value: str) -> None:
+        tagset = plugin.tagset
+        tagset.load()
+        raw = tagset._Tagset__raw_data  # type: ignore[attr-defined]  # noqa: SLF001
+        if value:
+            raw[field] = value
+        else:
+            raw.pop(field, None)
+        tagset._write_plist()  # noqa: SLF001
+        tagset.load()
 
     def _on_search_results(self, results: list[SearchResult]) -> None:
         plugins = [r.plugin for r in results]

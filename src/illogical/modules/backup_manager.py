@@ -297,7 +297,7 @@ def _parse_tagset_plist(path: Path) -> dict | None:
     try:
         with path.open("rb") as f:
             return plistlib.load(f)
-    except (plistlib.InvalidFileException, OSError):
+    except Exception:  # noqa: BLE001
         return None
 
 
