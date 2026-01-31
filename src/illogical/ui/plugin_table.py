@@ -34,6 +34,8 @@ KVK_K = 0x28
 
 
 class _VimTableView(QTableView):
+    enter_pressed = Signal()
+
     def _select_row(self, row: int) -> None:
         index = self.model().index(row, 0)
         self.selectionModel().setCurrentIndex(
@@ -56,6 +58,10 @@ class _VimTableView(QTableView):
             current = self.currentIndex()
             if current.row() > 0:
                 self._select_row(current.row() - 1)
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.enter_pressed.emit()
             event.accept()
             return
         super().keyPressEvent(event)
@@ -131,8 +137,16 @@ class PluginTableView(QWidget):
         layout.addWidget(self._table, 1)
 
         self._table.selectionModel().currentChanged.connect(self._on_current_changed)
+        self._table.enter_pressed.connect(self._on_enter_pressed)
 
     def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
+        if current.isValid():
+            plugin = self._model.get_plugin(current.row())
+            if plugin:
+                self.plugin_selected.emit(plugin)
+
+    def _on_enter_pressed(self) -> None:
+        current = self._table.currentIndex()
         if current.isValid():
             plugin = self._model.get_plugin(current.row())
             if plugin:
@@ -174,6 +188,12 @@ class PluginTableView(QWidget):
         has_selection = self._table.selectionModel().hasSelection()
         if not has_selection and self._model.rowCount() > 0:
             self._table.selectRow(0)
+
+        current = self._table.currentIndex()
+        if current.isValid():
+            plugin = self._model.get_plugin(current.row())
+            if plugin:
+                self.plugin_selected.emit(plugin)
 
     def _on_search_escape(self) -> None:
         self._table.setFocus()

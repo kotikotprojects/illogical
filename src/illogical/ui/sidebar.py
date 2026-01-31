@@ -257,6 +257,9 @@ class Sidebar(QWidget):
         super().__init__(parent)
         self.setMinimumWidth(200)
 
+        self._active_category: str | None = None
+        self._active_manufacturer: str | None = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -392,22 +395,30 @@ class Sidebar(QWidget):
         self._uncategorized.set_selected(False)
 
     def _on_show_all_clicked(self) -> None:
+        self._active_category = "Show All"
+        self._active_manufacturer = None
         self._clear_selections()
         self.category_selected.emit("Show All")
 
     def _on_uncategorized_clicked(self) -> None:
+        self._active_category = None
+        self._active_manufacturer = None
         self._clear_selections()
         self.category_selected.emit(None)
 
     def _on_category_clicked(self, index: QModelIndex) -> None:
         full_path = index.data(Qt.ItemDataRole.UserRole)
         if full_path:
+            self._active_category = full_path
+            self._active_manufacturer = None
             self._manufacturer_list.clearSelection()
             self.category_selected.emit(full_path)
 
     def _on_manufacturer_clicked(self, index: QModelIndex) -> None:
         manufacturer = index.data(Qt.ItemDataRole.DisplayRole)
         if manufacturer:
+            self._active_manufacturer = manufacturer
+            self._active_category = None
             self._category_tree.clearSelection()
             self.manufacturer_selected.emit(manufacturer)
 
@@ -431,26 +442,58 @@ class Sidebar(QWidget):
         self._manufacturer_search.clear()
 
     def select_show_all(self) -> None:
+        self._active_category = "Show All"
+        self._active_manufacturer = None
         self._clear_selections()
         self.category_selected.emit("Show All")
 
     def select_uncategorized(self) -> None:
+        self._active_category = None
+        self._active_manufacturer = None
         self._clear_selections()
         self._uncategorized.set_selected(True)
         self.category_selected.emit(None)
 
     def focus_category_tree(self) -> None:
         self._category_tree.setFocus()
-        top_level_index = self._category_model.index_for_path("Top Level")
-        if top_level_index.isValid():
-            self._category_tree.setCurrentIndex(top_level_index)
+
+        if self._active_category and self._active_category not in ("Show All", None):
+            target_path = self._active_category
+        else:
+            target_path = "Top Level"
+
+        target_index = self._category_model.index_for_path(target_path)
+        if target_index.isValid():
+            parent = target_index.parent()
+            while parent.isValid():
+                self._category_tree.expand(parent)
+                parent = parent.parent()
+            self._category_tree.selectionModel().setCurrentIndex(
+                target_index,
+                self._category_tree.selectionModel().SelectionFlag.ClearAndSelect,
+            )
 
     def focus_manufacturer_list(self) -> None:
         self._manufacturer_list.setFocus()
-        if not self._manufacturer_list.selectionModel().hasSelection():
+
+        target_index = None
+        if self._active_manufacturer:
+            for row in range(self._manufacturer_proxy.rowCount()):
+                index = self._manufacturer_proxy.index(row, 0)
+                if index.data(Qt.ItemDataRole.DisplayRole) == self._active_manufacturer:
+                    target_index = index
+                    break
+
+        if target_index is None:
             first_index = self._manufacturer_proxy.index(0, 0)
             if first_index.isValid():
-                self._manufacturer_list.setCurrentIndex(first_index)
+                target_index = first_index
+
+        if target_index is not None:
+            self._manufacturer_list.selectionModel().setCurrentIndex(
+                target_index,
+                self._manufacturer_list.selectionModel().SelectionFlag.ClearAndSelect,
+            )
 
     def _on_header_dragged(self, delta: int) -> None:
         sizes = self._splitter.sizes()
@@ -461,7 +504,10 @@ class Sidebar(QWidget):
 
     def highlight_categories(self, category_paths: list[str]) -> None:
         self._category_tree.clearSelection()
-        self._manufacturer_list.clearSelection()
+
+        if self._active_manufacturer is None:
+            self._manufacturer_list.clearSelection()
+
         self._uncategorized.set_selected(False)
 
         if not category_paths:
