@@ -2,10 +2,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
+from logic_plugin_manager.exceptions import (
+    CategoryExistsError,
+    CategoryValidationError,
+    MusicAppsLoadError,
+    MusicAppsWriteError,
+)
 from PySide6.QtCore import (
     QAbstractItemModel,
     QAbstractListModel,
     QAbstractTableModel,
+    QByteArray,
+    QMimeData,
     QModelIndex,
     QObject,
     QSortFilterProxyModel,
@@ -14,10 +22,19 @@ from PySide6.QtCore import (
 )
 
 from illogical.modules.sf_symbols import sf_symbol
+from illogical.modules.virtual_category import VirtualCategoryTree
 
 if TYPE_CHECKING:
     from logic_plugin_manager import AudioComponent, Logic
 
+CategoryError = (
+    MusicAppsLoadError,
+    MusicAppsWriteError,
+    CategoryExistsError,
+    CategoryValidationError,
+    OSError,
+    ValueError,
+)
 
 COL_NAME = 0
 COL_CUSTOM_NAME = 1
@@ -246,12 +263,21 @@ class PluginTableModel(QAbstractTableModel):
 
 class CategoryTreeItem:
     def __init__(
-        self, name: str, full_path: str, parent: CategoryTreeItem | None = None
+        self,
+        name: str,
+        full_path: str,
+        parent: CategoryTreeItem | None = None,
+        plugin_count: int = 0,
     ) -> None:
         self.name = name
         self.full_path = full_path
         self.parent_item = parent
         self.children: list[CategoryTreeItem] = []
+        self.plugin_count = plugin_count
+
+    @property
+    def is_empty(self) -> bool:
+        return self.plugin_count == 0
 
     def append_child(self, child: CategoryTreeItem) -> None:
         self.children.append(child)
@@ -270,56 +296,59 @@ class CategoryTreeItem:
         return 0
 
 
+CATEGORY_MIME_TYPE = "application/x-illogical-category"
+
+
 class CategoryTreeModel(QAbstractItemModel):
+    category_changed = Signal()
+    error_occurred = Signal(str, str)
+    backup_requested = Signal(bool)
+
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._root = CategoryTreeItem("", "")
+        self._virtual_tree: VirtualCategoryTree | None = None
+        self._logic: Logic | None = None
 
     def build_from_plugins(self, logic: Logic) -> None:
         self.beginResetModel()
-        self._root = CategoryTreeItem("", "")
-
-        categories: set[str] = set()
-        for plugin in logic.plugins.all():
-            for cat in plugin.categories:
-                if cat.name != "":
-                    categories.add(cat.name)
-
-        category_items: dict[str, CategoryTreeItem] = {}
-
-        top_level_item = CategoryTreeItem("Top Level", "Top Level", self._root)
-        self._root.append_child(top_level_item)
-
-        for cat_path in categories:
-            parts = cat_path.split(":")
-            current_path = ""
-            parent_item = self._root
-
-            for part in parts:
-                current_path = f"{current_path}:{part}" if current_path else part
-
-                if current_path not in category_items:
-                    item = CategoryTreeItem(part, current_path, parent_item)
-                    parent_item.append_child(item)
-                    category_items[current_path] = item
-
-                parent_item = category_items[current_path]
-
-        self._sort_category_tree(self._root, logic)
+        self._logic = logic
+        self._virtual_tree = VirtualCategoryTree()
+        self._virtual_tree.build_from_logic(logic)
+        self._root = self._build_qt_tree_from_virtual()
         self.endResetModel()
 
-    def _sort_category_tree(self, item: CategoryTreeItem, logic: Logic) -> None:
-        def get_sort_key(path: str) -> tuple[int, str]:
-            if path in logic.categories:
-                return (logic.categories[path].index, path.lower())
-            return (2**31 - 1, path.lower())
+    def _build_qt_tree_from_virtual(self) -> CategoryTreeItem:
+        from illogical.modules.virtual_category import (  # noqa: PLC0415
+            VirtualCategoryNode,
+        )
 
-        top_level = [c for c in item.children if c.full_path == "Top Level"]
-        others = [c for c in item.children if c.full_path != "Top Level"]
-        others.sort(key=lambda c: get_sort_key(c.full_path))
-        item.children = top_level + others
-        for child in item.children:
-            self._sort_category_tree(child, logic)
+        if self._virtual_tree is None:
+            return CategoryTreeItem("", "")
+
+        root = CategoryTreeItem("", "")
+
+        def build_item(
+            virtual_node: VirtualCategoryNode, parent_item: CategoryTreeItem
+        ) -> None:
+            for child_node in virtual_node.children:
+                item = CategoryTreeItem(
+                    child_node.name,
+                    child_node.full_path,
+                    parent_item,
+                    child_node.plugin_count,
+                )
+                parent_item.append_child(item)
+                build_item(child_node, item)
+
+        build_item(self._virtual_tree.root, root)
+        return root
+
+    def _rebuild_from_virtual(self) -> None:
+        self.beginResetModel()
+        self._root = self._build_qt_tree_from_virtual()
+        self.endResetModel()
+        self.category_changed.emit()
 
     def index(
         self, row: int, column: int, parent: QModelIndex | None = None
@@ -395,6 +424,223 @@ class CategoryTreeModel(QAbstractItemModel):
             return QModelIndex()
 
         return find_in_item(self._root, QModelIndex())
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        default_flags = super().flags(index)
+        if not index.isValid():
+            return default_flags | Qt.ItemFlag.ItemIsDropEnabled
+
+        item: CategoryTreeItem = index.internalPointer()
+        if item.full_path == "Top Level":
+            return default_flags
+
+        return (
+            default_flags
+            | Qt.ItemFlag.ItemIsDragEnabled
+            | Qt.ItemFlag.ItemIsDropEnabled
+        )
+
+    def supportedDropActions(self) -> Qt.DropAction:  # noqa: N802
+        return Qt.DropAction.MoveAction
+
+    def mimeTypes(self) -> list[str]:  # noqa: N802
+        return [CATEGORY_MIME_TYPE]
+
+    def mimeData(self, indexes: list[QModelIndex]) -> QMimeData:  # noqa: N802
+        mime_data = QMimeData()
+        if not indexes:
+            return mime_data
+
+        paths = []
+        for index in indexes:
+            if index.isValid():
+                item: CategoryTreeItem = index.internalPointer()
+                if item.full_path and item.full_path != "Top Level":
+                    paths.append(item.full_path)
+
+        if paths:
+            mime_data.setData(CATEGORY_MIME_TYPE, QByteArray(paths[0].encode("utf-8")))
+
+        return mime_data
+
+    def dropMimeData(  # noqa: N802, C901, PLR0911, PLR0912
+        self,
+        data: QMimeData,
+        action: Qt.DropAction,
+        row: int,
+        column: int,  # noqa: ARG002
+        parent: QModelIndex,
+    ) -> bool:
+        if action != Qt.DropAction.MoveAction:
+            return False
+        if not data.hasFormat(CATEGORY_MIME_TYPE):
+            return False
+        if self._virtual_tree is None or self._logic is None:
+            return False
+
+        raw_data = data.data(CATEGORY_MIME_TYPE).data()
+        source_path = bytes(raw_data).decode("utf-8") if raw_data else ""
+        source_node = self._virtual_tree.get_node(source_path)
+        if source_node is None:
+            return False
+
+        all_nodes = source_node.all_nodes_flat()
+        old_path_to_node = [(n.full_path, n) for n in all_nodes]
+
+        if parent.isValid():
+            target_item: CategoryTreeItem = parent.internalPointer()
+            target_path = target_item.full_path
+        else:
+            target_path = ""
+
+        if row == -1:
+            target_node = self._virtual_tree.get_node(target_path)
+            if target_node is None:
+                return False
+            if target_path == "Top Level":
+                return False
+            if not self._virtual_tree.insert_into_parent(source_node, target_node):
+                return False
+        else:
+            if target_path:
+                target_parent_node = self._virtual_tree.get_node(target_path)
+            else:
+                target_parent_node = self._virtual_tree.root
+
+            if target_parent_node is None:
+                return False
+
+            if row < len(target_parent_node.children):
+                sibling_node = target_parent_node.children[row]
+                if not self._virtual_tree.move_before(source_node, sibling_node):
+                    return False
+            elif target_parent_node.children:
+                last_sibling = target_parent_node.children[-1]
+                if not self._virtual_tree.move_after(source_node, last_sibling):
+                    return False
+
+        changed = {
+            old_path: n.full_path
+            for old_path, n in old_path_to_node
+            if old_path != n.full_path
+        }
+
+        self.backup_requested.emit(bool(changed))
+
+        try:
+            self._virtual_tree.sync_to_logic(self._logic, changed if changed else None)
+            self._virtual_tree.update_plugin_counts(self._logic)
+        except CategoryError as e:
+            self.error_occurred.emit("Category Move Failed", str(e))
+            return False
+        self._rebuild_from_virtual()
+        return True
+
+    def move_category_up(self, index: QModelIndex) -> bool:
+        if not index.isValid() or self._virtual_tree is None or self._logic is None:
+            return False
+
+        item: CategoryTreeItem = index.internalPointer()
+        node = self._virtual_tree.get_node(item.full_path)
+        if node is None:
+            return False
+
+        if not self._virtual_tree.move_within_level(node, -1):
+            return False
+
+        self.backup_requested.emit(False)  # noqa: FBT003
+
+        try:
+            self._virtual_tree.sync_to_logic(self._logic)
+        except CategoryError as e:
+            self.error_occurred.emit("Category Move Failed", str(e))
+            return False
+        self._rebuild_from_virtual()
+        return True
+
+    def move_category_down(self, index: QModelIndex) -> bool:
+        if not index.isValid() or self._virtual_tree is None or self._logic is None:
+            return False
+
+        item: CategoryTreeItem = index.internalPointer()
+        node = self._virtual_tree.get_node(item.full_path)
+        if node is None:
+            return False
+
+        if not self._virtual_tree.move_within_level(node, 1):
+            return False
+
+        self.backup_requested.emit(False)  # noqa: FBT003
+
+        try:
+            self._virtual_tree.sync_to_logic(self._logic)
+        except CategoryError as e:
+            self.error_occurred.emit("Category Move Failed", str(e))
+            return False
+        self._rebuild_from_virtual()
+        return True
+
+    def extract_category(self, index: QModelIndex) -> bool:
+        if not index.isValid() or self._virtual_tree is None or self._logic is None:
+            return False
+
+        item: CategoryTreeItem = index.internalPointer()
+        node = self._virtual_tree.get_node(item.full_path)
+        if node is None:
+            return False
+
+        all_nodes = node.all_nodes_flat()
+        old_path_to_node = [(n.full_path, n) for n in all_nodes]
+
+        if not self._virtual_tree.extract_from_parent(node):
+            return False
+
+        changed = {
+            old_path: n.full_path
+            for old_path, n in old_path_to_node
+            if old_path != n.full_path
+        }
+
+        self.backup_requested.emit(True)  # noqa: FBT003
+
+        try:
+            self._virtual_tree.sync_to_logic(self._logic, changed if changed else None)
+            self._virtual_tree.update_plugin_counts(self._logic)
+        except CategoryError as e:
+            self.error_occurred.emit("Category Move Failed", str(e))
+            return False
+        self._rebuild_from_virtual()
+        return True
+
+    def can_delete_category(self, index: QModelIndex) -> bool:
+        if not index.isValid():
+            return False
+
+        item: CategoryTreeItem = index.internalPointer()
+        if item.full_path == "Top Level":
+            return False
+
+        return item.is_empty and not item.children
+
+    def delete_category(self, index: QModelIndex) -> bool:
+        if not index.isValid() or self._virtual_tree is None or self._logic is None:
+            return False
+        if not self.can_delete_category(index):
+            return False
+
+        self.backup_requested.emit(True)  # noqa: FBT003
+
+        item: CategoryTreeItem = index.internalPointer()
+        if not self._virtual_tree.delete_category(item.full_path, self._logic):
+            return False
+
+        self._rebuild_from_virtual()
+        return True
+
+    def get_item_at_index(self, index: QModelIndex) -> CategoryTreeItem | None:
+        if not index.isValid():
+            return None
+        return index.internalPointer()
 
 
 class ManufacturerListModel(QAbstractListModel):

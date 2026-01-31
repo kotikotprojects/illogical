@@ -15,6 +15,8 @@ from illogical.modules.backup_models import (
     BackupManifest,
     BackupSettings,
     BackupTrigger,
+    CategoryChange,
+    CategoryChangeType,
     ChangeType,
     DetailedBackupChanges,
     FieldChange,
@@ -32,6 +34,7 @@ BACKUP_INDEX_FILENAME = ".backup_index.json"
 
 TAGS_PATH = tags_path
 BACKUPS_PATH = tags_path.parent / ".nothing_to_see_here_just_illogical_saving_ur_ass"
+MUSICAPPS_PROPERTIES = "MusicApps.properties"
 
 
 def _compute_file_checksum(file_path: Path) -> str:
@@ -353,6 +356,47 @@ def _tags_id_from_filename(filename: str) -> str:
     return filename.removesuffix(".tagset")
 
 
+def _parse_musicapps_sorting(path: Path) -> list[str]:
+    props_file = path / MUSICAPPS_PROPERTIES
+    if not props_file.exists():
+        return []
+    try:
+        with props_file.open("rb") as f:
+            data = plistlib.load(f)
+        return data.get("sorting", [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _compute_category_changes(
+    backup_sorting: list[str], current_sorting: list[str]
+) -> list[CategoryChange]:
+    changes: list[CategoryChange] = []
+    backup_set = set(backup_sorting)
+    current_set = set(current_sorting)
+
+    moved_new_paths: set[str] = set()
+
+    for old_path in backup_set - current_set:
+        base_name = old_path.split(":")[-1]
+        moved_to = next(
+            (c for c in current_set - backup_set if c.split(":")[-1] == base_name), None
+        )
+        if moved_to:
+            changes.append(CategoryChange(old_path, moved_to, CategoryChangeType.MOVED))
+            moved_new_paths.add(moved_to)
+        else:
+            changes.append(CategoryChange(old_path, None, CategoryChangeType.DELETED))
+
+    changes.extend(
+        CategoryChange(None, new_path, CategoryChangeType.ADDED)
+        for new_path in current_set - backup_set
+        if new_path not in moved_new_paths
+    )
+
+    return changes
+
+
 def compute_detailed_changes(
     backup_name: str, logic: Logic | None = None
 ) -> DetailedBackupChanges:
@@ -404,4 +448,8 @@ def compute_detailed_changes(
             PluginChange(tags_id, plugin_name, ChangeType.MODIFIED, field_changes)
         )
 
-    return DetailedBackupChanges(plugins=plugin_changes)
+    backup_sorting = _parse_musicapps_sorting(backup_path)
+    current_sorting = _parse_musicapps_sorting(TAGS_PATH)
+    category_changes = _compute_category_changes(backup_sorting, current_sorting)
+
+    return DetailedBackupChanges(plugins=plugin_changes, categories=category_changes)

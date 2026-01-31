@@ -20,6 +20,12 @@ class ChangeType(Enum):
     DELETED = "deleted"
 
 
+class CategoryChangeType(Enum):
+    MOVED = "moved"
+    DELETED = "deleted"
+    ADDED = "added"
+
+
 @dataclass
 class FieldChange:
     field_name: str
@@ -36,8 +42,16 @@ class PluginChange:
 
 
 @dataclass
+class CategoryChange:
+    old_path: str | None
+    new_path: str | None
+    change_type: CategoryChangeType
+
+
+@dataclass
 class DetailedBackupChanges:
     plugins: list[PluginChange] = field(default_factory=list)
+    categories: list[CategoryChange] = field(default_factory=list)
 
     @property
     def added(self) -> list[PluginChange]:
@@ -52,8 +66,22 @@ class DetailedBackupChanges:
         return [p for p in self.plugins if p.change_type == ChangeType.DELETED]
 
     @property
+    def categories_moved(self) -> list[CategoryChange]:
+        return [c for c in self.categories if c.change_type == CategoryChangeType.MOVED]
+
+    @property
+    def categories_deleted(self) -> list[CategoryChange]:
+        return [
+            c for c in self.categories if c.change_type == CategoryChangeType.DELETED
+        ]
+
+    @property
+    def categories_added(self) -> list[CategoryChange]:
+        return [c for c in self.categories if c.change_type == CategoryChangeType.ADDED]
+
+    @property
     def is_empty(self) -> bool:
-        return len(self.plugins) == 0
+        return len(self.plugins) == 0 and len(self.categories) == 0
 
 
 @dataclass

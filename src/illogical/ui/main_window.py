@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self._sidebar.category_selected.connect(self._on_category_selected)
         self._sidebar.manufacturer_selected.connect(self._on_manufacturer_selected)
         self._sidebar.enter_pressed.connect(self._plugin_table.focus_table)
+        self._sidebar.backup_requested.connect(self._on_category_backup_requested)
         self._plugin_table.search_changed.connect(self._on_search_changed)
         self._plugin_table.plugin_selected.connect(self._on_plugin_selected)
         self._plugin_table.edit_requested.connect(self._on_plugin_edit_requested)
@@ -193,6 +194,12 @@ class MainWindow(QMainWindow):
             self._plugin_table.update_plugin_display(plugin, column)
         except OSError as e:
             QMessageBox.warning(self, "Edit Failed", f"Failed to save changes: {e}")
+
+    def _on_category_backup_requested(self, force: bool) -> None:  # noqa: FBT001
+        if force or backup_manager.should_create_auto_backup():
+            backup_manager.create_backup(
+                BackupTrigger.AUTO, "Before category modification"
+            )
 
     def _on_search_results(self, results: list[SearchResult]) -> None:
         plugins = [r.plugin for r in results]

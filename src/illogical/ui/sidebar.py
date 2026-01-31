@@ -3,14 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from AppKit import NSColor  # type: ignore[attr-defined]
-from PySide6.QtCore import QModelIndex, QRect, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QModelIndex, QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QCursor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QHBoxLayout,
     QLabel,
     QListView,
+    QMenu,
     QSplitter,
     QStyle,
     QStyledItemDelegate,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from illogical.modules.models import (
+    CategoryTreeItem,
     CategoryTreeModel,
     ManufacturerFilterProxy,
     ManufacturerListModel,
@@ -42,15 +44,109 @@ KVK_L = 0x25
 class _VimTreeView(QTreeView):
     enter_pressed = Signal()
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu_requested)
+        self._expanded_paths: set[str] = set()
+        self.context_menu_path: str | None = None
+
+    def setModel(self, model: CategoryTreeModel | None) -> None:  # noqa: N802
+        old_model = self.model()
+        if old_model is not None:
+            old_model.modelAboutToBeReset.disconnect(self._save_expanded_state)
+            old_model.modelReset.disconnect(self._restore_expanded_state)
+        super().setModel(model)
+        if model is not None:
+            model.modelAboutToBeReset.connect(self._save_expanded_state)
+            model.modelReset.connect(self._restore_expanded_state)
+
+    def _save_expanded_state(self) -> None:
+        self._expanded_paths.clear()
+        model = self.model()
+        if not isinstance(model, CategoryTreeModel):
+            return
+
+        def collect_expanded(parent: QModelIndex) -> None:
+            for row in range(model.rowCount(parent)):
+                index = model.index(row, 0, parent)
+                if self.isExpanded(index):
+                    path = index.data(Qt.ItemDataRole.UserRole)
+                    if path:
+                        self._expanded_paths.add(path)
+                    collect_expanded(index)
+
+        collect_expanded(QModelIndex())
+
+    def _restore_expanded_state(self) -> None:
+        model = self.model()
+        if not isinstance(model, CategoryTreeModel):
+            return
+
+        for path in self._expanded_paths:
+            index = model.index_for_path(path)
+            if index.isValid():
+                self.expand(index)
+
     def _select_and_activate(self, index: QModelIndex) -> None:
         self.selectionModel().setCurrentIndex(
             index, self.selectionModel().SelectionFlag.ClearAndSelect
         )
         self.clicked.emit(index)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+    def _on_context_menu_requested(self, pos: QPoint) -> None:
+        index = self.indexAt(pos)
+        if index.isValid():
+            self._show_context_menu(index)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.RightButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802, C901, PLR0911, PLR0912
         vk = event.nativeVirtualKey()
         key = event.key()
+        mods = event.modifiers()
+
+        has_alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+        has_shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        has_ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        has_meta = bool(mods & Qt.KeyboardModifier.MetaModifier)
+
+        if has_alt and has_shift and not has_ctrl and not has_meta:
+            model = self.model()
+            current = self.currentIndex()
+            if isinstance(model, CategoryTreeModel):
+                if key == Qt.Key.Key_Up:
+                    if not model.move_category_up(current):
+                        model.extract_category(current)
+                    self._restore_selection_after_move(current)
+                    event.accept()
+                    return
+                if key == Qt.Key.Key_Down:
+                    if not model.move_category_down(current):
+                        model.extract_category(current)
+                    self._restore_selection_after_move(current)
+                    event.accept()
+                    return
+
+        if (
+            has_alt
+            and not has_shift
+            and not has_ctrl
+            and not has_meta
+            and key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            self._show_context_menu(self.currentIndex())
+            event.accept()
+            return
 
         if vk == KVK_J or key == Qt.Key.Key_Down:
             next_idx = self.indexBelow(self.currentIndex())
@@ -77,6 +173,109 @@ class _VimTreeView(QTreeView):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _restore_selection_after_move(self, old_index: QModelIndex) -> None:
+        if not old_index.isValid():
+            return
+        item: CategoryTreeItem = old_index.internalPointer()
+        path = item.full_path
+        model = self.model()
+        if isinstance(model, CategoryTreeModel):
+            new_index = model.index_for_path(path)
+            if new_index.isValid():
+                parent = new_index.parent()
+                while parent.isValid():
+                    self.expand(parent)
+                    parent = parent.parent()
+                self.selectionModel().setCurrentIndex(
+                    new_index, self.selectionModel().SelectionFlag.ClearAndSelect
+                )
+
+    def _show_context_menu(self, index: QModelIndex) -> None:
+        if not index.isValid():
+            return
+
+        model = self.model()
+        if not isinstance(model, CategoryTreeModel):
+            return
+
+        item: CategoryTreeItem = index.internalPointer()
+        if item.full_path == "Top Level":
+            return
+
+        self.context_menu_path = item.full_path
+        self.viewport().update()
+
+        import pyqt_liquidglass as glass  # noqa: PLC0415
+
+        menu = QMenu(self)
+        menu.aboutToHide.connect(self._on_context_menu_hidden)
+        menu.setStyleSheet("""
+            QMenu {
+                background: transparent;
+                border: none;
+                border-radius: 10px;
+                padding: 4px 2px;
+            }
+            QMenu::item {
+                padding: 6px 14px 6px 6px;
+                margin: 0px 2px;
+                border-radius: 6px;
+                color: rgba(255, 255, 255, 0.9);
+            }
+            QMenu::item:selected {
+                background-color: rgba(255, 255, 255, 0.15);
+            }
+            QMenu::icon {
+                padding-left: 6px;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: rgba(255, 255, 255, 0.12);
+                margin: 6px 10px;
+            }
+        """)
+        glass.prepare_window_for_glass(menu)
+
+        move_up_action = menu.addAction(sf_symbol("arrow.up", 14), "Move Up")
+        move_up_action.setShortcut("Alt+Shift+Up")
+        move_up_action.triggered.connect(lambda: self._do_move_up(model, index))
+
+        move_down_action = menu.addAction(sf_symbol("arrow.down", 14), "Move Down")
+        move_down_action.setShortcut("Alt+Shift+Down")
+        move_down_action.triggered.connect(lambda: self._do_move_down(model, index))
+
+        if item.parent_item and item.parent_item.full_path:
+            menu.addSeparator()
+            extract_action = menu.addAction(
+                sf_symbol("arrow.turn.left.up", 14), "Move Out of Parent"
+            )
+            extract_action.triggered.connect(lambda: self._do_extract(model, index))
+
+        if model.can_delete_category(index):
+            menu.addSeparator()
+            delete_action = menu.addAction(sf_symbol("trash", 14), "Delete Category")
+            delete_action.triggered.connect(lambda: model.delete_category(index))
+
+        menu.popup(QCursor.pos())
+        opts = glass.GlassOptions(corner_radius=10.0)
+        QTimer.singleShot(0, lambda: glass.apply_glass_to_window(menu, opts))
+
+    def _on_context_menu_hidden(self) -> None:
+        self.context_menu_path = None
+        self.viewport().update()
+
+    def _do_move_up(self, model: CategoryTreeModel, index: QModelIndex) -> None:
+        model.move_category_up(index)
+        self._restore_selection_after_move(index)
+
+    def _do_move_down(self, model: CategoryTreeModel, index: QModelIndex) -> None:
+        model.move_category_down(index)
+        self._restore_selection_after_move(index)
+
+    def _do_extract(self, model: CategoryTreeModel, index: QModelIndex) -> None:
+        model.extract_category(index)
+        self._restore_selection_after_move(index)
 
 
 class _VimListView(QListView):
@@ -117,8 +316,22 @@ class _CategoryDelegate(QStyledItemDelegate):
     def paint(
         self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex
     ) -> None:
+        from PySide6.QtGui import QBrush, QColor, QPainterPath  # noqa: PLC0415
+
         full_path = index.data(Qt.ItemDataRole.UserRole)
         icon = index.data(Qt.ItemDataRole.DecorationRole)
+
+        tree_view = option.widget
+        is_context_target = (
+            isinstance(tree_view, _VimTreeView)
+            and tree_view.context_menu_path == full_path
+        )
+        if is_context_target:
+            painter.save()
+            path = QPainterPath()
+            path.addRoundedRect(option.rect.toRectF(), 4, 4)
+            painter.fillPath(path, QBrush(QColor(128, 128, 128, 60)))
+            painter.restore()
 
         if full_path == "Top Level" and icon and not icon.isNull():
             opt = QStyleOptionViewItem(option)
@@ -252,6 +465,7 @@ class Sidebar(QWidget):
     category_selected = Signal(object)
     manufacturer_selected = Signal(str)
     enter_pressed = Signal()
+    backup_requested = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -320,7 +534,9 @@ class Sidebar(QWidget):
         tree_layout.setSpacing(0)
 
         self._category_model = CategoryTreeModel()
-        self._category_tree = _VimTreeView()
+        self._category_model.error_occurred.connect(self._show_category_error)
+        self._category_model.backup_requested.connect(self.backup_requested)
+        self._category_tree = _VimTreeView(self)
         self._category_tree.setItemDelegate(_CategoryDelegate(self._category_tree))
         self._category_tree.setModel(self._category_model)
         self._category_tree.setHeaderHidden(True)
@@ -393,6 +609,25 @@ class Sidebar(QWidget):
         self._category_tree.clearSelection()
         self._manufacturer_list.clearSelection()
         self._uncategorized.set_selected(False)
+
+    def _show_category_error(self, title: str, message: str) -> None:
+        from AppKit import NSAlert, NSAlertStyleWarning, NSApp  # noqa: PLC0415
+
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_(title)
+        alert.setInformativeText_(message)
+        alert.setAlertStyle_(NSAlertStyleWarning)
+        alert.addButtonWithTitle_("OK")
+
+        window = None
+        if self.window():
+            window = self.window().winId().__int__()
+            ns_window = NSApp.windowWithWindowNumber_(window)
+            if ns_window:
+                alert.beginSheetModalForWindow_completionHandler_(ns_window, None)
+                return
+
+        alert.runModal()
 
     def _on_show_all_clicked(self) -> None:
         self._active_category = "Show All"

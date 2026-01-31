@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 from illogical.modules.backup_models import (
     BackupInfo,
     BackupTrigger,
+    CategoryChange,
+    CategoryChangeType,
     ChangeType,
     DetailedBackupChanges,
     FieldChange,
@@ -167,6 +169,16 @@ class RestoreBackupWindow(QDialog):
             self._changes_tree.addTopLevelItem(item)
             return
 
+        self._add_category_group(
+            changes.categories_added, "Categories to remove", "folder.badge.minus"
+        )
+        self._add_category_group(
+            changes.categories_moved, "Categories to revert", "folder.badge.gearshape"
+        )
+        self._add_category_group(
+            changes.categories_deleted, "Categories to restore", "folder.badge.plus"
+        )
+
         self._add_plugin_group(changes.added, "Plugins to remove", "minus.circle")
         self._add_plugin_group(
             changes.modified, "Plugins to revert", "arrow.uturn.backward.circle"
@@ -191,6 +203,31 @@ class RestoreBackupWindow(QDialog):
                 for field_change in plugin.field_changes:
                     change_text = self._format_field_change(field_change)
                     QTreeWidgetItem(plugin_item, [change_text])
+
+        self._changes_tree.addTopLevelItem(group_item)
+        group_item.setExpanded(True)
+
+    def _add_category_group(
+        self, categories: list[CategoryChange], label: str, icon_name: str
+    ) -> None:
+        if not categories:
+            return
+
+        group_item = QTreeWidgetItem([f"{label} ({len(categories)})"])
+        icon = sf_symbol(icon_name, 14)
+        if not icon.isNull():
+            group_item.setIcon(0, icon)
+
+        for cat in sorted(
+            categories, key=lambda c: (c.old_path or c.new_path or "").lower()
+        ):
+            if cat.change_type == CategoryChangeType.MOVED:
+                text = f"{cat.new_path} → {cat.old_path}"
+            elif cat.change_type == CategoryChangeType.DELETED:
+                text = cat.old_path or ""
+            else:
+                text = cat.new_path or ""
+            QTreeWidgetItem(group_item, [text])
 
         self._changes_tree.addTopLevelItem(group_item)
         group_item.setExpanded(True)
