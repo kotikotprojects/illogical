@@ -290,7 +290,7 @@ class CategoryTreeModel(QAbstractItemModel):
         top_level_item = CategoryTreeItem("Top Level", "Top Level", self._root)
         self._root.append_child(top_level_item)
 
-        for cat_path in sorted(categories):
+        for cat_path in categories:
             parts = cat_path.split(":")
             current_path = ""
             parent_item = self._root
@@ -305,7 +305,21 @@ class CategoryTreeModel(QAbstractItemModel):
 
                 parent_item = category_items[current_path]
 
+        self._sort_category_tree(self._root, logic)
         self.endResetModel()
+
+    def _sort_category_tree(self, item: CategoryTreeItem, logic: Logic) -> None:
+        def get_sort_key(path: str) -> tuple[int, str]:
+            if path in logic.categories:
+                return (logic.categories[path].index, path.lower())
+            return (2**31 - 1, path.lower())
+
+        top_level = [c for c in item.children if c.full_path == "Top Level"]
+        others = [c for c in item.children if c.full_path != "Top Level"]
+        others.sort(key=lambda c: get_sort_key(c.full_path))
+        item.children = top_level + others
+        for child in item.children:
+            self._sort_category_tree(child, logic)
 
     def index(
         self, row: int, column: int, parent: QModelIndex | None = None
