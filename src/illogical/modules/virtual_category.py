@@ -472,3 +472,60 @@ class VirtualCategoryTree:
             if n.full_path != old_path:
                 result[n.full_path.replace(old_path, node.full_path, 1)] = n.full_path
         return result
+
+    def create_category(self, path: str, logic: Logic) -> bool:
+        if path in self._nodes:
+            return False
+        if path == "Top Level":
+            return False
+
+        parts = path.split(":")
+        parent_path = ":".join(parts[:-1]) if len(parts) > 1 else ""
+        name = parts[-1]
+
+        if parent_path:
+            parent_node = self.get_node(parent_path)
+            if parent_node is None:
+                return False
+        else:
+            parent_node = self._root
+
+        node = VirtualCategoryNode(
+            name=name, full_path=path, parent=parent_node, plugin_count=0
+        )
+        parent_node.children.append(node)
+        self._nodes[path] = node
+
+        with contextlib.suppress(CategoryExistsError):
+            logic.introduce_category(path)
+
+        return True
+
+    def rename_category(self, node: VirtualCategoryNode, new_name: str) -> bool:
+        if node.full_path == "Top Level":
+            return False
+        if not new_name or ":" in new_name:
+            return False
+
+        old_path = node.full_path
+
+        if node.parent and node.parent.full_path:
+            new_path = f"{node.parent.full_path}:{new_name}"
+        else:
+            new_path = new_name
+
+        if new_path in self._nodes and self._nodes[new_path] != node:
+            return False
+
+        del self._nodes[old_path]
+        node.name = new_name
+        node.full_path = new_path
+        self._nodes[new_path] = node
+
+        for desc in node.descendants_flat():
+            old_desc_path = desc.full_path
+            del self._nodes[old_desc_path]
+            desc.full_path = desc.full_path.replace(old_path, new_path, 1)
+            self._nodes[desc.full_path] = desc
+
+        return True

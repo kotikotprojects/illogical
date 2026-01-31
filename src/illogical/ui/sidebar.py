@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListView,
     QMenu,
+    QPushButton,
     QSplitter,
     QStyle,
     QStyledItemDelegate,
@@ -109,6 +110,19 @@ class _VimTreeView(QTreeView):
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        index = self.indexAt(event.position().toPoint())
+        if index.isValid():
+            item: CategoryTreeItem = index.internalPointer()
+            if item.children:
+                if self.isExpanded(index):
+                    self.collapse(index)
+                else:
+                    self.expand(index)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802, C901, PLR0911, PLR0912
         vk = event.nativeVirtualKey()
@@ -237,6 +251,18 @@ class _VimTreeView(QTreeView):
         """)
         glass.prepare_window_for_glass(menu)
 
+        rename_action = menu.addAction(sf_symbol("pencil", 14), "Rename")
+        rename_action.triggered.connect(lambda: self._do_rename(index))
+
+        create_sub_action = menu.addAction(
+            sf_symbol("folder.badge.plus", 14), "Create Subcategory"
+        )
+        create_sub_action.triggered.connect(
+            lambda: self._do_create_subcategory(model, index)
+        )
+
+        menu.addSeparator()
+
         move_up_action = menu.addAction(sf_symbol("arrow.up", 14), "Move Up")
         move_up_action.setShortcut("Alt+Shift+Up")
         move_up_action.triggered.connect(lambda: self._do_move_up(model, index))
@@ -276,6 +302,19 @@ class _VimTreeView(QTreeView):
     def _do_extract(self, model: CategoryTreeModel, index: QModelIndex) -> None:
         model.extract_category(index)
         self._restore_selection_after_move(index)
+
+    def _do_rename(self, index: QModelIndex) -> None:
+        self.edit(index)
+
+    def _do_create_subcategory(
+        self, model: CategoryTreeModel, index: QModelIndex
+    ) -> None:
+        item: CategoryTreeItem = index.internalPointer()
+        new_index = model.create_category("Untitled", item.full_path)
+        if new_index.isValid():
+            self.expand(index)
+            self.setCurrentIndex(new_index)
+            self.edit(new_index)
 
 
 class _VimListView(QListView):
@@ -362,6 +401,19 @@ class _CategoryDelegate(QStyledItemDelegate):
 
         super().paint(painter, option, index)
 
+    def setEditorData(  # noqa: N802
+        self, editor: QWidget, index: QModelIndex
+    ) -> None:
+        from PySide6.QtWidgets import QLineEdit  # noqa: PLC0415
+
+        if isinstance(editor, QLineEdit):
+            text = index.data(Qt.ItemDataRole.EditRole)
+            if text:
+                editor.setText(str(text))
+                editor.selectAll()
+        else:
+            super().setEditorData(editor, index)
+
 
 class StickyItem(QWidget):
     clicked = Signal(str)
@@ -435,6 +487,43 @@ class _SectionHeader(QWidget):
         layout.addWidget(icon_label)
         layout.addWidget(title_label)
         layout.addStretch()
+
+
+class _CategorySectionHeader(_SectionHeader):
+    add_clicked = Signal()
+
+    def __init__(
+        self, title: str, icon_name: str, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(title, icon_name, parent)
+
+        from PySide6.QtCore import QSize  # noqa: PLC0415
+
+        self._add_button = QPushButton()
+        self._add_button.setFixedSize(16, 16)
+        self._add_button.setIconSize(QSize(10, 10))
+        self._add_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        icon = sf_symbol("plus", 10, (0.25, 0.25, 0.27, 1.0), bold=True)
+        if not icon.isNull():
+            self._add_button.setIcon(icon)
+        self._add_button.setStyleSheet("""
+            QPushButton {
+                background-color: #9B999E;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #ADABAF;
+            }
+            QPushButton:pressed {
+                background-color: #8A888D;
+            }
+        """)
+        self._add_button.clicked.connect(self.add_clicked)
+
+        layout = self.layout()
+        if layout is not None:
+            layout.addWidget(self._add_button)
 
 
 class _DraggableHeader(_SectionHeader):
@@ -525,7 +614,8 @@ class Sidebar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = _SectionHeader("Category", "folder")
+        header = _CategorySectionHeader("Category", "folder")
+        header.add_clicked.connect(self._on_add_category_clicked)
         layout.addWidget(header)
 
         tree_container = QWidget()
@@ -648,6 +738,16 @@ class Sidebar(QWidget):
             self._active_manufacturer = None
             self._manufacturer_list.clearSelection()
             self.category_selected.emit(full_path)
+
+    def _on_add_category_clicked(self) -> None:
+        index = self._category_model.create_category("Untitled")
+        if index.isValid():
+            parent = index.parent()
+            while parent.isValid():
+                self._category_tree.expand(parent)
+                parent = parent.parent()
+            self._category_tree.setCurrentIndex(index)
+            self._category_tree.edit(index)
 
     def _on_manufacturer_clicked(self, index: QModelIndex) -> None:
         manufacturer = index.data(Qt.ItemDataRole.DisplayRole)

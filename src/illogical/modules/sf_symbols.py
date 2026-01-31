@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from AppKit import (
     NSColor,  # type: ignore[attr-defined]
+    NSFontWeightBold,  # type: ignore[attr-defined]
     NSFontWeightRegular,  # type: ignore[attr-defined]
     NSGraphicsContext,  # type: ignore[attr-defined]
     NSImage,  # type: ignore[attr-defined]
@@ -20,7 +21,7 @@ from Quartz import (
     kCGImageAlphaPremultipliedLast,  # type: ignore[attr-defined]
 )
 
-_icon_cache: dict[tuple[str, int, tuple[float, ...] | None], QIcon] = {}
+_icon_cache: dict[tuple[str, int, tuple[float, ...] | None, bool], QIcon] = {}
 
 SCALE_FACTOR = 2
 
@@ -28,10 +29,14 @@ DEFAULT_COLOR = (155.0 / 255.0, 153.0 / 255.0, 158.0 / 255.0, 1.0)
 
 
 def sf_symbol(
-    name: str, size: int = 16, color: tuple[float, float, float, float] | None = None
+    name: str,
+    size: int = 16,
+    color: tuple[float, float, float, float] | None = None,
+    *,
+    bold: bool = False,
 ) -> QIcon:
     color_key = color if color else None
-    cache_key = (name, size, color_key)
+    cache_key = (name, size, color_key, bold)
     if cache_key in _icon_cache:
         return _icon_cache[cache_key]
 
@@ -39,8 +44,9 @@ def sf_symbol(
     if ns_image is None:
         return QIcon()
 
+    weight = NSFontWeightBold if bold else NSFontWeightRegular
     size_config = NSImageSymbolConfiguration.configurationWithPointSize_weight_scale_(
-        float(size), NSFontWeightRegular, NSImageSymbolScaleMedium
+        float(size), weight, NSImageSymbolScaleMedium
     )
     r, g, b, a = color if color else DEFAULT_COLOR
     icon_color = NSColor.colorWithSRGBRed_green_blue_alpha_(r, g, b, a)

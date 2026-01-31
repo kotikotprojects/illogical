@@ -18,6 +18,7 @@ from PySide6.QtCore import (
     QObject,
     QSortFilterProxyModel,
     Qt,
+    QTimer,
     Signal,
 )
 
@@ -400,7 +401,7 @@ class CategoryTreeModel(QAbstractItemModel):
 
         item: CategoryTreeItem = index.internalPointer()
 
-        if role == Qt.ItemDataRole.DisplayRole:
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return item.name
 
         if role == Qt.ItemDataRole.UserRole:
@@ -438,6 +439,7 @@ class CategoryTreeModel(QAbstractItemModel):
             default_flags
             | Qt.ItemFlag.ItemIsDragEnabled
             | Qt.ItemFlag.ItemIsDropEnabled
+            | Qt.ItemFlag.ItemIsEditable
         )
 
     def supportedDropActions(self) -> Qt.DropAction:  # noqa: N802
@@ -641,6 +643,81 @@ class CategoryTreeModel(QAbstractItemModel):
         if not index.isValid():
             return None
         return index.internalPointer()
+
+    def setData(  # noqa: N802
+        self, index: QModelIndex, value: object, role: int = Qt.ItemDataRole.EditRole
+    ) -> bool:
+        if role != Qt.ItemDataRole.EditRole:
+            return False
+        if not index.isValid():
+            return False
+
+        item: CategoryTreeItem = index.internalPointer()
+        if item.full_path == "Top Level":
+            return False
+
+        new_name = str(value).strip() if value else ""
+        if not new_name or new_name == item.name:
+            return False
+
+        if not self._virtual_tree or not self._logic:
+            return False
+
+        return self.rename_category(index, new_name)
+
+    def create_category(self, name: str, parent_path: str | None = None) -> QModelIndex:
+        if not self._virtual_tree or not self._logic:
+            return QModelIndex()
+
+        new_path = f"{parent_path}:{name}" if parent_path else name
+
+        self.backup_requested.emit(True)  # noqa: FBT003
+
+        try:
+            if not self._virtual_tree.create_category(new_path, self._logic):
+                return QModelIndex()
+        except CategoryError as e:
+            self.error_occurred.emit("Category Creation Failed", str(e))
+            return QModelIndex()
+
+        self._rebuild_from_virtual()
+        return self.index_for_path(new_path)
+
+    def rename_category(self, index: QModelIndex, new_name: str) -> bool:
+        if not index.isValid() or not self._virtual_tree or not self._logic:
+            return False
+
+        item: CategoryTreeItem = index.internalPointer()
+        if item.full_path == "Top Level":
+            return False
+
+        node = self._virtual_tree.get_node(item.full_path)
+        if node is None:
+            return False
+
+        all_nodes = node.all_nodes_flat()
+        old_path_to_node = [(n.full_path, n) for n in all_nodes]
+
+        if not self._virtual_tree.rename_category(node, new_name):
+            return False
+
+        changed = {
+            old_path: n.full_path
+            for old_path, n in old_path_to_node
+            if old_path != n.full_path
+        }
+
+        self.backup_requested.emit(True)  # noqa: FBT003
+
+        try:
+            self._virtual_tree.sync_to_logic(self._logic, changed if changed else None)
+            self._virtual_tree.update_plugin_counts(self._logic)
+        except CategoryError as e:
+            self.error_occurred.emit("Category Rename Failed", str(e))
+            return False
+
+        QTimer.singleShot(0, self._rebuild_from_virtual)
+        return True
 
 
 class ManufacturerListModel(QAbstractListModel):
