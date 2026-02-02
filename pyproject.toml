@@ -1,11 +1,12 @@
 [tool.briefcase]
 project_name = "illogical"
 bundle = "com.kotikot.illogical"
-version = "0.0.1"
+version = "1.0.0"
 url = "https://dsp.kotikot.com/illogical"
 license.file = "LICENSE"
 author = "h"
 author_email = "h@kotikot.com"
+icon = "src/illogical/resources/icon"
 
 [tool.briefcase.app.illogical]
 formal_name = "illogical"
