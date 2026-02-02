@@ -77,6 +77,8 @@ jobs:
   release:
     name: "Upload Release"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs:
       - package
 
