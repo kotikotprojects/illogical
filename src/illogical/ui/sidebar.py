@@ -4,7 +4,14 @@ from typing import TYPE_CHECKING
 
 from AppKit import NSColor  # type: ignore[attr-defined]
 from PySide6.QtCore import QModelIndex, QPoint, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QFont
+from PySide6.QtGui import (
+    QCursor,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QFont,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -23,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from illogical.modules.models import (
+    PLUGIN_MIME_TYPE,
     CategoryTreeItem,
     CategoryTreeModel,
     ManufacturerFilterProxy,
@@ -50,12 +58,13 @@ class _VimTreeView(QTreeView):
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu_requested)
         self._expanded_paths: set[str] = set()
         self.context_menu_path: str | None = None
+        self.drop_target_path: str | None = None
 
     def setModel(self, model: CategoryTreeModel | None) -> None:  # noqa: N802
         old_model = self.model()
@@ -123,6 +132,36 @@ class _VimTreeView(QTreeView):
                 event.accept()
                 return
         super().mouseDoubleClickEvent(event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
+        if event.mimeData().hasFormat(PLUGIN_MIME_TYPE):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802
+        index = self.indexAt(event.position().toPoint())
+        if event.mimeData().hasFormat(PLUGIN_MIME_TYPE):
+            if index.isValid():
+                item: CategoryTreeItem = index.internalPointer()
+                self.drop_target_path = item.full_path
+            else:
+                self.drop_target_path = None
+            self.viewport().update()
+            event.acceptProposedAction()
+        else:
+            self.drop_target_path = None
+            super().dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802
+        self.drop_target_path = None
+        self.viewport().update()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
+        self.drop_target_path = None
+        self.viewport().update()
+        super().dropEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802, C901, PLR0911, PLR0912
         vk = event.nativeVirtualKey()
@@ -365,7 +404,11 @@ class _CategoryDelegate(QStyledItemDelegate):
             isinstance(tree_view, _VimTreeView)
             and tree_view.context_menu_path == full_path
         )
-        if is_context_target:
+        is_drop_target = (
+            isinstance(tree_view, _VimTreeView)
+            and tree_view.drop_target_path == full_path
+        )
+        if is_context_target or is_drop_target:
             painter.save()
             path = QPainterPath()
             path.addRoundedRect(option.rect.toRectF(), 4, 4)
@@ -694,6 +737,10 @@ class Sidebar(QWidget):
     def populate(self, logic: Logic) -> None:
         self._category_model.build_from_plugins(logic)
         self._manufacturer_model.build_from_plugins(logic)
+
+    @property
+    def category_model(self) -> CategoryTreeModel:
+        return self._category_model
 
     def _clear_selections(self) -> None:
         self._category_tree.clearSelection()

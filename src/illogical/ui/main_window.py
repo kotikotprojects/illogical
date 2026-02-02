@@ -20,7 +20,7 @@ from illogical.ui.restore_backup_window import RestoreBackupWindow
 from illogical.ui.sidebar import Sidebar
 
 if TYPE_CHECKING:
-    from logic_plugin_manager import AudioComponent, Logic, SearchResult
+    from logic_plugin_manager import AudioComponent, Category, Logic, SearchResult
     from PySide6.QtGui import QCloseEvent, QKeyEvent, QShowEvent
 
     from illogical.modules.backup_models import (
@@ -138,6 +138,12 @@ class MainWindow(QMainWindow):
         self._backup_service.set_logic(logic)
         self._sidebar.populate(logic)
         self._plugin_table.set_plugins(logic)
+        self._plugin_table.set_category_tree(self._sidebar.category_model)
+        self._sidebar.category_model.plugins_dropped.connect(self._on_plugins_dropped)
+        self._plugin_table.category_assignment_requested.connect(
+            self._on_category_assignment
+        )
+        self._plugin_table.category_removal_requested.connect(self._on_category_removal)
         self._loading_overlay.hide()
         self._plugin_table.focus_table()
 
@@ -200,6 +206,131 @@ class MainWindow(QMainWindow):
             backup_manager.create_backup(
                 BackupTrigger.AUTO, "Before category modification"
             )
+
+    def _on_plugins_dropped(
+        self,
+        plugin_ids: list[str],
+        category_path: str,
+        is_move: bool,  # noqa: FBT001
+    ) -> None:
+        if not self._logic:
+            return
+
+        plugins = []
+        for plugin_id in plugin_ids:
+            parts = plugin_id.split("|")
+            if len(parts) == 3:  # noqa: PLR2004
+                name, manufacturer, type_code = parts
+                for plugin in self._logic.plugins.all():
+                    if (
+                        plugin.name == name
+                        and plugin.manufacturer == manufacturer
+                        and plugin.type_code == type_code
+                    ):
+                        plugins.append(plugin)
+                        break
+
+        if plugins:
+            self._assign_plugins_to_category(plugins, category_path, is_move)
+
+    def _on_category_assignment(
+        self,
+        plugins: list[AudioComponent],
+        category_path: str,
+        is_move: bool,  # noqa: FBT001
+    ) -> None:
+        self._assign_plugins_to_category(plugins, category_path, is_move)
+
+    def _on_category_removal(self, plugins: list[AudioComponent]) -> None:
+        if not self._logic or not self._current_category:
+            return
+
+        try:
+            if backup_manager.should_create_auto_backup():
+                backup_manager.create_backup(
+                    BackupTrigger.AUTO,
+                    f"Before removing {len(plugins)} plugin(s) from category",
+                )
+
+            category_path = self._current_category
+            if category_path == "Top Level":
+                category_path = ""
+
+            category = self._logic.categories.get(category_path)
+            if category:
+                for plugin in plugins:
+                    plugin.remove_from_category(category)
+                self._logic.sync_category_plugin_amount(category)
+
+            self._sidebar.populate(self._logic)
+            self._plugin_table.filter_by_category(self._current_category)
+
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "Category Removal Failed", f"Failed to remove plugins: {e}"
+            )
+
+    def _assign_plugins_to_category(
+        self,
+        plugins: list[AudioComponent],
+        category_path: str,
+        is_move: bool,  # noqa: FBT001
+    ) -> None:
+        if not self._logic:
+            return
+
+        try:
+            if backup_manager.should_create_auto_backup():
+                action = "Moving" if is_move else "Assigning"
+                backup_manager.create_backup(
+                    BackupTrigger.AUTO,
+                    f"Before {action.lower()} {len(plugins)} plugin(s) to category",
+                )
+
+            if category_path:
+                category = self._logic.categories.get(category_path)
+                if not category:
+                    category = self._logic.introduce_category(category_path)
+            else:
+                category = self._logic.categories.get("")
+                if not category:
+                    category = self._logic.introduce_category("")
+
+            for plugin in plugins:
+                self._add_plugin_to_category(plugin, category, is_move)
+
+            self._logic.sync_category_plugin_amount(category)
+            self._sidebar.populate(self._logic)
+
+            if self._current_manufacturer:
+                self._plugin_table.filter_by_manufacturer(self._current_manufacturer)
+            else:
+                self._plugin_table.filter_by_category(self._current_category)
+
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "Category Assignment Failed", f"Failed to assign plugins: {e}"
+            )
+
+    def _add_plugin_to_category(
+        self,
+        plugin: AudioComponent,
+        category: Category,
+        is_move: bool,  # noqa: FBT001
+    ) -> None:
+        current_tags = getattr(plugin.tagset, "tags", None)
+        if current_tags is None:
+            plugin.tagset.load()
+            current_tags = plugin.tagset.tags
+
+        if is_move:
+            new_tags = {category.name: "user"}
+        else:
+            new_tags = dict(current_tags)
+            new_tags[category.name] = "user"
+
+        plugin.tagset.set_tags(new_tags)
+        plugin.load()
 
     def _on_search_results(self, results: list[SearchResult]) -> None:
         plugins = [r.plugin for r in results]

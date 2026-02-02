@@ -136,9 +136,38 @@ class PluginTableModel(QAbstractTableModel):
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         base_flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        if index.isValid():
+            base_flags |= Qt.ItemFlag.ItemIsDragEnabled
         if index.column() in (COL_CUSTOM_NAME, COL_SHORT_NAME):
             return base_flags | Qt.ItemFlag.ItemIsEditable
         return base_flags
+
+    def mimeTypes(self) -> list[str]:  # noqa: N802
+        return [PLUGIN_MIME_TYPE]
+
+    def mimeData(self, indexes: list[QModelIndex]) -> QMimeData:  # noqa: N802
+        mime_data = QMimeData()
+        if not indexes:
+            return mime_data
+
+        rows = set()
+        for index in indexes:
+            if index.isValid():
+                rows.add(index.row())
+
+        plugin_ids = []
+        for row in sorted(rows):
+            plugin = self.get_plugin(row)
+            if plugin:
+                plugin_ids.append(
+                    f"{plugin.name}|{plugin.manufacturer}|{plugin.type_code}"
+                )
+
+        if plugin_ids:
+            data = "\n".join(plugin_ids)
+            mime_data.setData(PLUGIN_MIME_TYPE, QByteArray(data.encode("utf-8")))
+
+        return mime_data
 
     def setData(  # noqa: N802
         self, index: QModelIndex, value: object, role: int = Qt.ItemDataRole.EditRole
@@ -298,12 +327,14 @@ class CategoryTreeItem:
 
 
 CATEGORY_MIME_TYPE = "application/x-illogical-category"
+PLUGIN_MIME_TYPE = "application/x-illogical-plugin"
 
 
 class CategoryTreeModel(QAbstractItemModel):
     category_changed = Signal()
     error_occurred = Signal(str, str)
     backup_requested = Signal(bool)
+    plugins_dropped = Signal(list, str, bool)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -443,10 +474,10 @@ class CategoryTreeModel(QAbstractItemModel):
         )
 
     def supportedDropActions(self) -> Qt.DropAction:  # noqa: N802
-        return Qt.DropAction.MoveAction
+        return Qt.DropAction.MoveAction | Qt.DropAction.CopyAction
 
     def mimeTypes(self) -> list[str]:  # noqa: N802
-        return [CATEGORY_MIME_TYPE]
+        return [CATEGORY_MIME_TYPE, PLUGIN_MIME_TYPE]
 
     def mimeData(self, indexes: list[QModelIndex]) -> QMimeData:  # noqa: N802
         mime_data = QMimeData()
@@ -473,6 +504,9 @@ class CategoryTreeModel(QAbstractItemModel):
         column: int,  # noqa: ARG002
         parent: QModelIndex,
     ) -> bool:
+        if data.hasFormat(PLUGIN_MIME_TYPE):
+            return self._handle_plugin_drop(data, parent)
+
         if action != Qt.DropAction.MoveAction:
             return False
         if not data.hasFormat(CATEGORY_MIME_TYPE):
@@ -536,6 +570,27 @@ class CategoryTreeModel(QAbstractItemModel):
             self.error_occurred.emit("Category Move Failed", str(e))
             return False
         self._rebuild_from_virtual()
+        return True
+
+    def _handle_plugin_drop(self, data: QMimeData, parent: QModelIndex) -> bool:
+        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+        if not parent.isValid():
+            return False
+
+        item: CategoryTreeItem = parent.internalPointer()
+        target_category = "" if item.full_path == "Top Level" else item.full_path
+
+        modifiers = QApplication.keyboardModifiers()
+        is_add = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        is_move = not is_add
+
+        raw_data = data.data(PLUGIN_MIME_TYPE).data()
+        plugin_ids = bytes(raw_data).decode("utf-8").split("\n") if raw_data else []
+
+        if plugin_ids:
+            self.plugins_dropped.emit(plugin_ids, target_category, is_move)
+
         return True
 
     def move_category_up(self, index: QModelIndex) -> bool:
@@ -643,6 +698,10 @@ class CategoryTreeModel(QAbstractItemModel):
         if not index.isValid():
             return None
         return index.internalPointer()
+
+    @property
+    def root_item(self) -> CategoryTreeItem:
+        return self._root
 
     def setData(  # noqa: N802
         self, index: QModelIndex, value: object, role: int = Qt.ItemDataRole.EditRole
