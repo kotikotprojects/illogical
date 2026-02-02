@@ -35,15 +35,18 @@ if TYPE_CHECKING:
 
 KVK_J = 0x26
 KVK_K = 0x28
+KVK_V = 0x09
 
 
 class _VimTableView(QTableView):
     enter_pressed = Signal()
     context_menu_requested = Signal(QPoint)
+    visual_mode_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._anchor_row: int | None = None
+        self._visual_line_mode: bool = False
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.setDefaultDropAction(Qt.DropAction.CopyAction)
@@ -113,7 +116,29 @@ class _VimTableView(QTableView):
             index, self.selectionModel().SelectionFlag.NoUpdate
         )
 
+    def enter_visual_line_mode(self) -> None:
+        if self._visual_line_mode:
+            return
+        self._visual_line_mode = True
+        current = self.currentIndex()
+        if current.isValid():
+            self._anchor_row = current.row()
+            self._select_row(current.row())
+        self.visual_mode_changed.emit(True)  # noqa: FBT003
+
+    def exit_visual_line_mode(self) -> None:
+        if not self._visual_line_mode:
+            return
+        self._visual_line_mode = False
+        self.visual_mode_changed.emit(False)  # noqa: FBT003
+
+    def is_visual_line_mode(self) -> bool:
+        return self._visual_line_mode
+
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._visual_line_mode:
+            self.exit_visual_line_mode()
+
         index = self.indexAt(event.position().toPoint())
         if not index.isValid():
             super().mousePressEvent(event)
@@ -154,13 +179,26 @@ class _VimTableView(QTableView):
         self._anchor_row = index.row()
         super().mousePressEvent(event)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802, C901, PLR0911, PLR0912
         vk = event.nativeVirtualKey()
         key = event.key()
         mods = event.modifiers()
         has_shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         has_alt = bool(mods & Qt.KeyboardModifier.AltModifier)
         has_ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+
+        if key == Qt.Key.Key_Escape and self._visual_line_mode:
+            self.exit_visual_line_mode()
+            current = self.currentIndex()
+            if current.isValid():
+                self._select_row(current.row())
+            event.accept()
+            return
+
+        if has_shift and vk == KVK_V:
+            self.enter_visual_line_mode()
+            event.accept()
+            return
 
         if has_ctrl and key == Qt.Key.Key_A:
             self._select_all_rows()
@@ -172,11 +210,13 @@ class _VimTableView(QTableView):
             event.accept()
             return
 
+        extend_selection = has_shift or self._visual_line_mode
+
         if vk == KVK_J or key == Qt.Key.Key_Down:
             current = self.currentIndex()
             if current.row() < self.model().rowCount() - 1:
                 new_row = current.row() + 1
-                if has_shift:
+                if extend_selection:
                     self._extend_selection_to(new_row)
                 else:
                     self._select_row(new_row)
@@ -186,7 +226,7 @@ class _VimTableView(QTableView):
             current = self.currentIndex()
             if current.row() > 0:
                 new_row = current.row() - 1
-                if has_shift:
+                if extend_selection:
                     self._extend_selection_to(new_row)
                 else:
                     self._select_row(new_row)
@@ -216,6 +256,7 @@ class PluginTableView(QWidget):
     edit_requested = Signal(object, int, str)
     category_assignment_requested = Signal(list, str, bool)
     category_removal_requested = Signal(list)
+    visual_mode_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -285,6 +326,7 @@ class PluginTableView(QWidget):
         self._table.selectionModel().currentChanged.connect(self._on_current_changed)
         self._table.enter_pressed.connect(self._on_enter_pressed)
         self._table.context_menu_requested.connect(self._on_context_menu_requested)
+        self._table.visual_mode_changed.connect(self.visual_mode_changed)
 
     def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         if current.isValid():
@@ -472,6 +514,9 @@ class PluginTableView(QWidget):
             plugin = self._model.get_plugin(current.row())
             if plugin:
                 self.plugin_selected.emit(plugin)
+
+    def is_visual_line_mode(self) -> bool:
+        return self._table.is_visual_line_mode()
 
     def _on_search_escape(self) -> None:
         self._table.setFocus()
