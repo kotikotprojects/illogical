@@ -14,6 +14,7 @@ class MenuBar(QMenuBar):
     backup_now_triggered = Signal()
     restore_backup_triggered = Signal()
     backup_settings_triggered = Signal()
+    shortcuts_help_triggered = Signal()
 
     def __init__(self, main_window: QMainWindow | None = None) -> None:
         super().__init__()
@@ -90,4 +91,9 @@ class MenuBar(QMenuBar):
         backup_menu.addAction(settings_action)
 
     def _setup_help_menu(self) -> None:
-        self.addMenu("Help")
+        help_menu = self.addMenu("Help")
+
+        shortcuts_action = QAction("Keyboard Shortcuts", self)
+        shortcuts_action.setShortcut(QKeySequence("Ctrl+Shift+/"))
+        shortcuts_action.triggered.connect(self.shortcuts_help_triggered)
+        help_menu.addAction(shortcuts_action)

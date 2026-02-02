@@ -17,6 +17,7 @@ from illogical.ui.loading_overlay import LoadingOverlay
 from illogical.ui.menu_bar import MenuBar
 from illogical.ui.plugin_table import PluginTableView
 from illogical.ui.restore_backup_window import RestoreBackupWindow
+from illogical.ui.shortcuts_help_window import ShortcutsHelpWindow
 from illogical.ui.sidebar import Sidebar
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ class MainWindow(QMainWindow):
         self._menu_bar.backup_now_triggered.connect(self._on_backup_now)
         self._menu_bar.restore_backup_triggered.connect(self._on_restore_backup)
         self._menu_bar.backup_settings_triggered.connect(self._on_backup_settings)
+        self._menu_bar.shortcuts_help_triggered.connect(self._show_shortcuts_help)
 
     def _setup_ui(self) -> None:
         self._central = QWidget()
@@ -113,6 +115,7 @@ class MainWindow(QMainWindow):
 
         self._restore_window: RestoreBackupWindow | None = None
         self._settings_window: BackupSettingsWindow | None = None
+        self._shortcuts_window: ShortcutsHelpWindow | None = None
 
     def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
         super().showEvent(event)
@@ -469,6 +472,16 @@ class MainWindow(QMainWindow):
         self._plugin_table.clear_search()
         self._sidebar.clear_manufacturer_search()
         self._sidebar.select_show_all()
+
+    def _show_shortcuts_help(self) -> None:
+        if self._shortcuts_window is not None:
+            self._shortcuts_window.close()
+        self._shortcuts_window = ShortcutsHelpWindow()
+        self._shortcuts_window.destroyed.connect(self._on_shortcuts_window_destroyed)
+        self._shortcuts_window.show_centered(self)
+
+    def _on_shortcuts_window_destroyed(self) -> None:
+        self._shortcuts_window = None
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._service.shutdown()
